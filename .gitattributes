@@ -1,0 +1,17 @@
+# 일관된 줄바꿈 정규화
+* text=auto eol=lf
+
+# 셸 스크립트는 항상 LF
+*.sh text eol=lf
+
+# 바이너리로 취급 (diff 노이즈 방지)
+*.png binary
+*.pdf binary
+*.xlsx binary
+*.svg binary
+
+# GitHub Linguist: 문서/데이터가 언어 통계를 왜곡하지 않도록
+*.md linguist-documentation
+docs/** linguist-documentation
+.specify/** linguist-vendored
+.opencode/** linguist-vendored

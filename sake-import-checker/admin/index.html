@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sake Import Manager - Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div id="auth-screen" class="flex items-center justify-center min-h-screen">
+    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+      <h1 class="text-2xl font-bold text-center mb-6">관리자 로그인</h1>
+      <input
+        type="password"
+        id="password-input"
+        placeholder="비밀번호를 입력하세요"
+        class="w-full px-4 py-2 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        onkeypress="if(event.key==='Enter') login()"
+      />
+      <button
+        onclick="login()"
+        class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition"
+      >
+        로그인
+      </button>
+    </div>
+  </div>
+
+  <div id="main-screen" class="hidden p-8">
+    <div class="max-w-4xl mx-auto">
+      <h1 class="text-3xl font-bold mb-8">Sake Import Manager</h1>
+
+      <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4">데이터 업로드</h2>
+        
+        <!-- 업로드 모드 선택 -->
+        <div class="mb-4 p-4 bg-gray-50 rounded-lg">
+          <p class="text-sm font-medium text-gray-700 mb-3">업로드 모드 선택</p>
+          <div class="space-y-2">
+            <label class="flex items-start cursor-pointer">
+              <input type="radio" name="upload-mode" value="smart" checked 
+                class="mt-1 mr-3 text-blue-500 focus:ring-blue-500" />
+              <div>
+                <span class="font-medium text-gray-800">스마트 업데이트</span>
+                <span class="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">권장</span>
+                <p class="text-sm text-gray-500">기존 데이터 유지. 새 제품만 추가, 기존 제품은 수치만 갱신. (API 절약)</p>
+              </div>
+            </label>
+            <label class="flex items-start cursor-pointer">
+              <input type="radio" name="upload-mode" value="reset" 
+                class="mt-1 mr-3 text-red-500 focus:ring-red-500" />
+              <div>
+                <span class="font-medium text-gray-800">전체 초기화</span>
+                <span class="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">주의</span>
+                <p class="text-sm text-gray-500">기존 데이터 삭제 후 처음부터 다시 업로드. (API 대량 사용, 할당량 초과 가능)</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div
+          id="dropzone"
+          class="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer hover:border-blue-500 transition"
+          onclick="document.getElementById('file-input').click()"
+        >
+          <input type="file" id="file-input" accept=".xlsx" class="hidden" onchange="handleFileSelect(event)" />
+          <p class="text-gray-500">Excel 파일을 드래그하거나 클릭하세요</p>
+          <p class="text-sm text-gray-400 mt-2">.xlsx 파일만 지원</p>
+        </div>
+
+        <div id="progress-container" class="hidden mt-6">
+          <div class="flex justify-between mb-2">
+            <span id="progress-text" class="text-sm text-gray-600">0/0 (0%)</span>
+            <span id="progress-status" class="text-sm text-blue-600">처리 중...</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-4">
+            <div id="progress-bar" class="bg-blue-500 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+          <div id="progress-detail" class="mt-2 text-xs text-gray-500"></div>
+        </div>
+
+        <!-- 재시도 버튼 (에러 발생 시 표시) -->
+        <div id="retry-container" class="hidden mt-4 text-center">
+          <button id="retry-btn" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 mr-2">
+            🔄 다시 시도
+          </button>
+          <button id="cancel-retry-btn" class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400">
+            취소
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h2 class="text-xl font-semibold mb-4">현재 상태</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="p-4 bg-gray-50 rounded-lg">
+            <p class="text-sm text-gray-500">총 레코드</p>
+            <p id="total-records" class="text-2xl font-bold">-</p>
+          </div>
+          <div class="p-4 bg-gray-50 rounded-lg">
+            <p class="text-sm text-gray-500">마지막 업데이트</p>
+            <p id="last-update" class="text-lg font-medium">-</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/upload.js"></script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────
+#  monodream — portfolio repo .gitignore
+#  민감한 비즈니스 데이터 / 시크릿 / 빌드 산출물은 공개하지 않습니다.
+# ─────────────────────────────────────────────────────────────
+
+# ── 비즈니스 데이터 (절대 공개 금지) ──────────────────────────
+# Tridge 수출입 거래 데이터, 수입사별 매출, 원본/분석 데이터 등
+*.xlsx
+*.xls
+*.csv
+~$*                     # Excel 임시 잠금 파일
+data/
+tridge_data_manager/test_output/
+tridge_data_manager/*.xlsx
+
+# ── 시크릿 / 환경 변수 ────────────────────────────────────────
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+secrets.*
+**/wrangler/.wrangler/
+
+# ── Node / JS ────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.wrangler/
+bun.lock
+# 루트 stub lockfile (실제 프로젝트 lockfile은 각 하위 폴더에서 관리)
+/package-lock.json
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# ── 로그 ─────────────────────────────────────────────────────
+*.log
+
+# ── OS / 에디터 ──────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.swp
+*~
+
+# ── 로컬 툴 설정 ─────────────────────────────────────────────
+.claude/settings.local.json
+.opencode/node_modules/

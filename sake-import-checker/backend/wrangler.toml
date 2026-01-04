@@ -1,0 +1,50 @@
+name = "sake-import-checker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Environment variables (non-secret)
+[vars]
+ENVIRONMENT = "production"
+MAX_CONCURRENT_REQUESTS = 5
+RATE_LIMIT_PER_MINUTE = 15
+
+# Secrets (set via `wrangler secret put`)
+# - TELEGRAM_BOT_TOKEN
+# - GEMINI_API_KEY
+# - SUPABASE_URL
+# - SUPABASE_KEY
+# - ADMIN_PASSWORD
+
+# Build configuration
+[build]
+command = ""
+
+# Observability
+[observability]
+enabled = true
+
+# Smart Placement - Gemini API를 지원하는 리전 우선 실행
+[placement]
+mode = "smart"
+
+# Cron Triggers
+[triggers]
+crons = ["0 */6 * * *"]
+
+# Cloudflare Queue - 사진 순차 처리
+[[queues.producers]]
+queue = "photo-search-queue"
+binding = "PHOTO_QUEUE"
+
+[[queues.consumers]]
+queue = "photo-search-queue"
+max_batch_size = 1       # 사진 1장씩 순차 처리
+max_batch_timeout = 5    # 최대 5초 대기
+max_retries = 3          # 실패 시 최대 3회 재시도
+dead_letter_queue = "photo-search-dlq"  # 최종 실패 시 DLQ로 이동

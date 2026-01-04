@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사케 검색 봇 설치 매뉴얼</title>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        
+        body {
+            font-family: 'Pretendard', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            background-color: #f9f9f9;
+        }
+        
+        .container {
+            background-color: white;
+            padding: 50px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        }
+
+        h1 {
+            color: #2563eb;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        h2 {
+            color: #1e40af;
+            margin-top: 40px;
+            border-left: 5px solid #2563eb;
+            padding-left: 15px;
+            font-size: 22px;
+        }
+
+        h3 {
+            color: #4b5563;
+            margin-top: 25px;
+            font-size: 18px;
+        }
+
+        code {
+            background-color: #f3f4f6;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            color: #dc2626;
+            font-size: 0.9em;
+        }
+
+        pre {
+            background-color: #1f2937;
+            color: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Consolas', monospace;
+            margin: 15px 0;
+        }
+
+        .note {
+            background-color: #eff6ff;
+            border-left: 5px solid #3b82f6;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+
+        .step {
+            background-color: #2563eb;
+            color: white;
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            text-align: center;
+            border-radius: 50%;
+            margin-right: 10px;
+            font-size: 14px;
+            line-height: 24px;
+        }
+
+        a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+
+        @media print {
+            body {
+                background-color: white;
+                padding: 0;
+            }
+            .container {
+                box-shadow: none;
+                padding: 0;
+            }
+            a {
+                text-decoration: underline;
+                color: black;
+            }
+            pre {
+                border: 1px solid #ddd;
+                background-color: #f9f9f9;
+                color: black;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📘 사케 검색 봇 설치 매뉴얼</h1>
+        <p>이 매뉴얼은 서버나 코딩 지식이 없는 분들을 위해 작성되었습니다. 순서대로 따라 하시면 나만의 사케 검색 봇을 만드실 수 있습니다.</p>
+
+        <div class="note">
+            <strong>💡 팁:</strong> 이 문서를 인쇄하거나 PDF로 저장해두고 체크하면서 진행하세요.
+            (단축키: Ctrl + P 또는 Cmd + P)
+        </div>
+
+        <h2>🏗️ 1단계: 준비물 챙기기</h2>
+        <p>요리를 하려면 재료가 필요하듯, 봇을 만들려면 아래 프로그램들이 필요합니다.</p>
+        
+        <h3>1. VS Code (코드 편집기)</h3>
+        <p>노트장 같은 프로그램입니다. <a href="https://code.visualstudio.com/">여기서 다운로드</a>해서 설치하세요.</p>
+
+        <h3>2. Node.js (실행 도구)</h3>
+        <p><a href="https://nodejs.org/">여기서 다운로드</a>하세요. <strong>LTS 버전</strong>(왼쪽 버튼)을 받으시면 됩니다.</p>
+
+        <h3>3. Git (다운로드 도구)</h3>
+        <p><a href="https://git-scm.com/downloads">여기서 다운로드</a>하세요. 설치할 때 계속 'Next'만 누르면 됩니다.</p>
+
+        <h2>🔑 2단계: 회원가입 (무료)</h2>
+        <p>4곳의 사이트에 가입해야 합니다. 모두 무료입니다.</p>
+
+        <ul>
+            <li><strong>Cloudflare</strong>: 서버 역할 (<a href="https://dash.cloudflare.com/sign-up">가입하기</a>)</li>
+            <li><strong>Supabase</strong>: 데이터베이스 역할 (<a href="https://supabase.com">가입하기</a>)</li>
+            <li><strong>Google AI Studio</strong>: 인공지능 역할 (<a href="https://aistudio.google.com/">가입하기</a>)</li>
+            <li><strong>Telegram</strong>: 메신저 앱 설치</li>
+        </ul>
+
+        <h2>⚙️ 3단계: 데이터베이스 설정</h2>
+        <p>Supabase 사이트에서 <strong>SQL Editor</strong> 메뉴에 들어가 아래 코드를 복사해 붙여넣고 <strong>Run</strong> 버튼을 누르세요.</p>
+
+        <pre>
+-- 이 코드를 전체 복사하세요
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS sake_imports (
+  id BIGSERIAL PRIMARY KEY,
+  reported_product_name TEXT NOT NULL,
+  category TEXT,
+  exporter TEXT,
+  origin_country TEXT,
+  raw_importer_name TEXT,
+  value NUMERIC,
+  volume NUMERIC,
+  unit_price NUMERIC,
+  name_embedding vector(768),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- (나머지 인덱스 및 테이블 생성 코드...)
+-- 전체 코드는 BEGINNER_GUIDE.md 파일을 참고하세요
+        </pre>
+
+        <div class="note">
+            <strong>중요:</strong> 설정이 끝나면 <code>Project Settings > API</code> 메뉴에서 <strong>URL</strong>과 <strong>Key</strong>를 메모장에 꼭 적어두세요!
+        </div>
+
+        <h2>🚀 4단계: 한방 배포</h2>
+        <p>이제 복잡한 작업은 끝났습니다. 터미널에서 명령어 한 줄이면 됩니다.</p>
+
+        <h3>1. 터미널 열기</h3>
+        <p>VS Code에서 <code>Ctrl + `</code> (물결표 키)를 누르면 터미널이 열립니다.</p>
+
+        <h3>2. 명령어 입력</h3>
+        <pre>./scripts/deploy.sh</pre>
+        
+        <p>이 명령어를 입력하면 프로그램이 알아서 설치를 시작합니다. 중간에 물어보는 질문(API 키 등)에 메모해둔 내용을 붙여넣기만 하면 됩니다.</p>
+
+        <h2>🎉 5단계: 사용하기</h2>
+        <p>모든 과정이 끝났습니다! 이제 다음을 즐기세요:</p>
+        <ol>
+            <li><strong>관리자 페이지</strong>: 엑셀 파일을 드래그해서 업로드하세요.</li>
+            <li><strong>텔레그램 봇</strong>: 채팅방에 사케 사진을 보내보세요.</li>
+        </ol>
+
+        <hr>
+        <p style="text-align: center; margin-top: 50px; color: #666;">
+            Made by Monodream Project
+        </p>
+    </div>
+</body>
+</html>

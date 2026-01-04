@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:0;background:#ffffff;}
+  svg{display:block;font-family:"Apple SD Gothic Neo","Helvetica Neue",Arial,sans-serif;}
+  .lane-tg{fill:#eef2fb;stroke:#8fa8cc;stroke-width:1.5;}
+  .lane-sv{fill:#eef6ef;stroke:#8fbd94;stroke-width:1.5;}
+  .lane-label{font-size:23px;font-weight:700;fill:#333;}
+  .box{fill:#ffffff;stroke:#333333;stroke-width:2;}
+  .t{font-size:16px;fill:#111;}
+  .sub{font-size:13px;fill:#555;}
+  .edge{stroke:#333;stroke-width:2;fill:none;}
+  .skip{stroke:#333;stroke-width:2.5;fill:none;stroke-dasharray:2 6;stroke-linecap:round;}
+  .cross{stroke:#111;stroke-width:2.5;fill:none;}
+  .elabel{font-size:14px;fill:#111;}
+  .elabel-bg{fill:#ffffff;}
+</style>
+</head>
+<body>
+<svg width="1620" height="700" viewBox="0 0 1620 700" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#333"/>
+    </marker>
+    <marker id="arrowb" markerWidth="12" markerHeight="12" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L11,3.5 L0,7 Z" fill="#111"/>
+    </marker>
+  </defs>
+
+  <!-- ================= Swimlanes (drawn behind) ================= -->
+  <rect class="lane-tg" x="28"  y="74" width="284"  height="494" rx="12"/>
+  <text class="lane-label" x="170" y="104" text-anchor="middle">Telegram</text>
+
+  <rect class="lane-sv" x="342" y="74" width="1250" height="586" rx="12"/>
+  <text class="lane-label" x="967" y="104" text-anchor="middle">Server (Cloudflare Workers)</text>
+
+  <!-- ================= ROW 1 (left -> right) ================= -->
+  <rect class="box" x="50"  y="124" width="240" height="72" rx="6"/>
+  <text class="t"   x="170" y="156" text-anchor="middle">사용자 사진</text>
+  <text class="sub" x="170" y="178" text-anchor="middle">(라벨 촬영 · 전송)</text>
+
+  <rect class="box" x="370" y="124" width="240" height="72" rx="6"/>
+  <text class="t"   x="490" y="167" text-anchor="middle">Telegram Webhook 수신</text>
+
+  <rect class="box" x="690" y="124" width="240" height="72" rx="6"/>
+  <text class="t"   x="810" y="156" text-anchor="middle">Cloudflare Queue</text>
+  <text class="sub" x="810" y="178" text-anchor="middle">(1장씩 순차 처리)</text>
+
+  <rect class="box" x="1010" y="124" width="240" height="72" rx="6"/>
+  <text class="t"   x="1130" y="156" text-anchor="middle">Gemini Vision 추출</text>
+  <text class="sub" x="1130" y="178" text-anchor="middle">(브랜드 · 제조사 · 용량)</text>
+
+  <rect class="box" x="1330" y="124" width="240" height="72" rx="6"/>
+  <text class="t"   x="1450" y="156" text-anchor="middle">pgvector 벡터 검색</text>
+  <text class="sub" x="1450" y="178" text-anchor="middle">(HNSW, Top 50)</text>
+
+  <!-- ================= ROW 2 (right -> left) ================= -->
+  <rect class="box" x="1330" y="464" width="240" height="72" rx="6"/>
+  <text class="t"   x="1450" y="496" text-anchor="middle">메타데이터 재정렬</text>
+  <text class="sub" x="1450" y="518" text-anchor="middle">(제조사 · 숫자 매칭 점수)</text>
+
+  <polygon class="box" points="1130,454 1228,500 1130,546 1032,500"/>
+  <text class="t" x="1130" y="506" text-anchor="middle">유사도 판정</text>
+
+  <rect class="box" x="690" y="464" width="240" height="72" rx="6"/>
+  <text class="t"   x="810" y="496" text-anchor="middle">AI 검증</text>
+  <text class="sub" x="810" y="518" text-anchor="middle">(상위 3개 비교, ≥ 70점 확정)</text>
+
+  <rect class="box" x="370" y="464" width="240" height="72" rx="6"/>
+  <text class="t"   x="490" y="507" text-anchor="middle">응답 생성</text>
+
+  <rect class="box" x="50"  y="464" width="240" height="72" rx="6"/>
+  <text class="t"   x="170" y="496" text-anchor="middle">결과 수신</text>
+  <text class="sub" x="170" y="518" text-anchor="middle">(제품명 · 수입사 · 가격)</text>
+
+  <!-- ================= ROW 1 edges (L->R) ================= -->
+  <path class="cross" d="M290,160 L366,160" marker-end="url(#arrowb)"/>
+  <rect class="elabel-bg" x="278" y="134" width="104" height="20"/>
+  <text class="elabel" x="330" y="149" text-anchor="middle">① 사진 전송</text>
+
+  <path class="edge" d="M610,160 L686,160" marker-end="url(#arrow)"/>
+  <path class="edge" d="M930,160 L1006,160" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1250,160 L1326,160" marker-end="url(#arrow)"/>
+
+  <!-- turn : Vector (row1) -> Rerank (row2) -->
+  <path class="edge" d="M1450,196 L1450,460" marker-end="url(#arrow)"/>
+
+  <!-- ================= ROW 2 edges (R->L) ================= -->
+  <path class="edge" d="M1330,500 L1232,500" marker-end="url(#arrow)"/>
+
+  <path class="edge" d="M1032,500 L934,500" marker-end="url(#arrow)"/>
+  <rect class="elabel-bg" x="960" y="474" width="46" height="20"/>
+  <text class="elabel" x="983" y="489" text-anchor="middle">그 외</text>
+
+  <path class="edge" d="M690,500 L614,500" marker-end="url(#arrow)"/>
+
+  <path class="cross" d="M370,500 L294,500" marker-end="url(#arrowb)"/>
+  <rect class="elabel-bg" x="278" y="474" width="104" height="20"/>
+  <text class="elabel" x="330" y="489" text-anchor="middle">② 결과 전송</text>
+
+  <!-- ================= High Confidence Skip (판정 -> 응답, bypass 검증) ================= -->
+  <path class="skip" d="M1130,546 C1130,626 490,626 490,540" marker-end="url(#arrow)"/>
+  <rect class="elabel-bg" x="700" y="616" width="360" height="22"/>
+  <text class="elabel" x="880" y="632" text-anchor="middle" font-weight="600">High Confidence Skip  (≥ 0.82 또는 ≥ 0.75 &amp; 격차 &gt; 0.15)</text>
+</svg>
+</body>
+</html>
