@@ -92,6 +92,7 @@ sake-import-checker/
 ## 문서
 
 - [왕초보 설치 가이드](docs/BEGINNER_GUIDE.md) - **추천!**
+- [아키텍처](docs/ARCHITECTURE.md) - 조회/적재 두 흐름과 단계별 데이터 변환
 - [기술 설치 가이드](docs/SETUP.md)
 - [프로젝트 헌법](constitution.md)
 - [기능 명세서](spec.md)

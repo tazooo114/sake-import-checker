@@ -85,7 +85,7 @@
 - 진행률 실시간 표시
 
 ### 2. 검색 인덱스
-- 제품명: 벡터 임베딩 (Gemini text-embedding-004)
+- 제품명: 벡터 임베딩 (Gemini gemini-embedding-001, 768차원)
 - 메타데이터: 
   - Sake: Volume, Category, Exporter, Numbers
   - Wine: Exporter (Winery), Region, Grape, Vintage

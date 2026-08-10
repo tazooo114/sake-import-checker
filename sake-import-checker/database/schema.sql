@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS sake_imports (
   volume NUMERIC,
   unit_price NUMERIC,
   
-  -- Vector Embedding (Gemini text-embedding-004: 768 dimensions)
+  -- Vector Embedding (Gemini gemini-embedding-001, outputDimensionality: 768)
   -- Use halfvec to save storage (requires pgvector 0.7.0+)
   name_embedding halfvec(768),
   

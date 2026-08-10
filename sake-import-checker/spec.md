@@ -37,7 +37,7 @@
 ### AI/ML
 - **Google Gemini API**
   - Vision: 라벨 이미지 분석 (2.5 Flash)
-  - Embedding: 텍스트 벡터화 (text-embedding-004, 768차원)
+  - Embedding: 텍스트 벡터화 (gemini-embedding-001, 3072차원 → 768로 축소)
   - **Pay-as-you-go**: Rate Limit 제한 없이 고속 처리
 
 ### Data Processing Tools
