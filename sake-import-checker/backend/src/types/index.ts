@@ -9,7 +9,7 @@ export interface Env {
   // 설정되지 않으면 웹훅 검증을 건너뛴다 (기존 동작 유지).
   TELEGRAM_WEBHOOK_SECRET?: string;
   ENVIRONMENT: string;
-  PHOTO_QUEUE: Queue<PhotoQueueMessage>;
+  PHOTO_QUEUE: Queue<QueueMessage>;
 }
 
 // Cloudflare Queue 메시지 타입
@@ -17,6 +17,41 @@ export interface PhotoQueueMessage {
   chatId: number;
   messageId: number;
   fileId: string;
+}
+
+/**
+ * 검색 평가 픽스처.
+ *
+ * `expect`는 정답 제품명에 포함되는 문자열(부분 일치, 대소문자 무시)이다.
+ */
+export interface SearchEvalFixture {
+  name: string;
+  expect: string;
+  note?: string;
+  extracted: Partial<ExtractedLabelInfo> & { productType: ProductCategory };
+}
+
+/**
+ * 평가 실행 요청.
+ *
+ * 평가를 HTTP 핸들러에서 바로 돌리지 않고 큐에 넣는 이유: Cloudflare Workers는
+ * 요청을 받은 엣지 위치에서 외부 호출을 내보내는데, 관리자 HTTP 요청이 도달하는
+ * 위치에서는 Gemini 임베딩 API가 `User location is not supported`(400)로 거절한다.
+ * 큐 컨슈머는 사진 검색이 매일 정상 동작하는, Gemini가 허용하는 위치에서 실행되므로
+ * 같은 경로를 재사용한다.
+ */
+export interface EvalQueueMessage {
+  kind: 'search-eval';
+  /** 생략하면 저장소 픽스처를 쓴다. */
+  fixtures?: SearchEvalFixture[];
+  /** 결과를 보낼 텔레그램 chat_id. 생략하면 ADMIN_CHAT_ID로 보낸다. */
+  chatId?: number;
+}
+
+export type QueueMessage = PhotoQueueMessage | EvalQueueMessage;
+
+export function isEvalMessage(m: QueueMessage): m is EvalQueueMessage {
+  return (m as EvalQueueMessage).kind === 'search-eval';
 }
 
 export interface TelegramUpdate {

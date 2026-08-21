@@ -1,4 +1,4 @@
-import type { ExtractedLabelInfo, ProductCategory } from '../types';
+import type { ExtractedLabelInfo, SearchEvalFixture } from '../types';
 
 /**
  * 검색 단계 평가용 픽스처.
@@ -16,15 +16,7 @@ import type { ExtractedLabelInfo, ProductCategory } from '../types';
  * 검색이 틀리는 사례를 만나면 그 추출 JSON을 여기 추가할 것 — 실패가 회귀
  * 테스트로 남는다.
  */
-export interface SearchEvalFixture {
-  /** 사람이 알아볼 이름 */
-  name: string;
-  /** 정답 제품명에 반드시 포함되는 문자열 (부분 일치, 대소문자 무시) */
-  expect: string;
-  /** 이 픽스처가 무엇을 지키는지 */
-  note?: string;
-  extracted: Partial<ExtractedLabelInfo> & { productType: ProductCategory };
-}
+export type { SearchEvalFixture };
 
 export const SEARCH_EVAL_FIXTURES: SearchEvalFixture[] = [
   {

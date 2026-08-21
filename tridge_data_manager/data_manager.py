@@ -152,13 +152,21 @@ def process_tridge_files(input_files, output_dir):
     for f in input_files:
         try:
             xls = pd.ExcelFile(f)
-            # Find sheet name matching "Raw data" pattern (case-insensitive)
+            # Pick the first sheet whose header row contains the product column
+            # (data is not always on the first sheet, e.g. pivot sheets first).
+            # Fallback: "Raw data" sheet name pattern, then the first sheet.
             sheet_name = 0
             for sheet in xls.sheet_names:
-                if re.match(r"^Raw data", sheet, re.IGNORECASE):
+                header = pd.read_excel(xls, sheet_name=sheet, nrows=0)
+                if PRODUCT_COL in header.columns:
                     sheet_name = sheet
                     break
-            df = pd.read_excel(f, sheet_name=sheet_name)
+            else:
+                for sheet in xls.sheet_names:
+                    if re.match(r"^Raw data", sheet, re.IGNORECASE):
+                        sheet_name = sheet
+                        break
+            df = pd.read_excel(xls, sheet_name=sheet_name)
 
             # Normalize Columns
             if PRODUCT_COL not in df.columns and len(df.columns) > 3:
@@ -240,6 +248,13 @@ def process_tridge_files(input_files, output_dir):
             HSCODE_COL,
         ]
         group_keys = [k for k in group_keys if k in df_processed.columns]
+
+        # Files merged from different sources may lack some key columns
+        # (e.g. no Origin Country / Raw Importer Name); groupby drops rows
+        # with NaN keys, so blank them out instead of losing the rows.
+        for k in group_keys:
+            if k != "Date":
+                df_processed[k] = df_processed[k].fillna("")
 
         measure_agg = {
             k: "max"
