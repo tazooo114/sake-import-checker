@@ -301,6 +301,75 @@ function buildSearchText(extracted: ExtractedLabelInfo): string {
 // ============================================
 // Metadata Prioritization (Dispatch)
 // ============================================
+
+/**
+ * 일본 주류 회사명·와이너리명에 거의 항상 들어가는 일반 토큰.
+ *
+ * 단어 단위 매칭에 이런 토큰을 쓰면 무관한 양조장끼리 전부 점수를 주고받는다.
+ * 2026-08-21 실측에서 `exporterEnglish`가 "Higashi Shuzo Co., Ltd."로 나왔을 때
+ * "shuzo"(酒造 = 양조장)가 거의 모든 일본 양조장 이름에 걸려, `numbers`가 빈
+ * 배열인데도 무관한 제품(마코토 쥰마이다이긴죠)이 1위로 올라왔다.
+ */
+const GENERIC_EXPORTER_TOKENS = new Set([
+  'shuzo', 'shuzou', 'syuzo', 'jozo', 'jouzou', 'honten', 'seishu',
+  'brewery', 'breweries', 'brewing', 'distillery', 'winery', 'wines', 'wine',
+  'company', 'corp', 'corporation', 'kabushiki', 'kaisha', 'gaisha',
+  'sake', 'shochu', 'japan', 'japanese', 'limited', 'holdings',
+]);
+
+/**
+ * 양조장명에서 식별력 있는 단어만 남긴다.
+ * 구두점으로도 쪼개서 "co.,"나 "ltd." 같은 형태를 걸러낸다.
+ */
+export function significantExporterWords(exporter: string): string[] {
+  return exporter
+    .split(/[\s,.()\-]+/)
+    .filter(w => w.length > 3 && !GENERIC_EXPORTER_TOKENS.has(w));
+}
+
+/**
+ * "이 후보가 맞다"는 실질 신호의 점수. 브랜드명과 양조장명만 본다.
+ *
+ * 이 값이 0이면 그 후보는 라벨과 아무 공통점이 없다는 뜻이므로, 숫자·지역·품종
+ * 같은 보조 신호로 순위를 끌어올려서는 안 된다 (아래 호출부에서 게이트로 쓴다).
+ */
+export function scoreIdentity(
+  productName: string,
+  dbExporter: string,
+  extracted: ExtractedLabelInfo
+): number {
+  let score = 0;
+
+  // 브랜드명이 제품명에 들어 있는가.
+  // DB 제품명은 "후쿠코마치 쥰마이 카라구치 (FUKUKOMACHI JUNMAI KARAKUCHI)" 형태로
+  // 한글·영문을 모두 담고 있어 양쪽 표기가 다 매칭 대상이 된다.
+  for (const brand of [extracted.brandEnglish, extracted.brandKorean]) {
+    const b = (brand || '').toLowerCase().trim();
+    if (b.length >= 2 && productName.includes(b)) {
+      score += 100;
+      break;
+    }
+  }
+
+  const extractedExporter = (extracted.exporterEnglish || '').toLowerCase().trim();
+  if (!extractedExporter) return score;
+
+  // dbExporter가 빈 문자열일 때 `extractedExporter.includes('')`가 true가 되어
+  // exporter 없는 행 전부에 80점이 붙던 버그를 막는다.
+  if (dbExporter.length > 0) {
+    if (dbExporter === extractedExporter) return score + 100;
+    if (dbExporter.includes(extractedExporter) || extractedExporter.includes(dbExporter)) {
+      return score + 80;
+    }
+  }
+
+  if (productName.includes(extractedExporter)) return score + 60;
+
+  const words = significantExporterWords(extractedExporter);
+  const matched = words.filter(w => dbExporter.includes(w) || productName.includes(w));
+  return score + matched.length * 20;
+}
+
 function prioritizeByMetadata(
   candidates: Product[],
   extracted: ExtractedLabelInfo
@@ -321,56 +390,31 @@ function prioritizeWineByMetadata(
   extracted: ExtractedLabelInfo
 ): Product[] {
   const scored = candidates.map(c => {
-    let score = 0;
     const productName = c.reported_product_name.toLowerCase();
     const exporter = (c.exporter || '').toLowerCase();
 
-    // Priority 1: Winery/Exporter (100 points max)
-    if (extracted.exporterEnglish) {
-      const extractedWinery = extracted.exporterEnglish.toLowerCase();
+    // 1단계: 실질 신호 (브랜드명 · 와이너리명)
+    const identity = scoreIdentity(productName, exporter, extracted);
+    let score = identity;
 
-      // Perfect match in exporter field
-      if (exporter === extractedWinery) {
-        score += 100;
+    // 2단계: 지역·품종·빈티지는 보조 신호다. 실질 신호가 없는 후보를
+    // 단독으로 끌어올리면 무관한 제품이 1위가 된다 ("Malbec"이 같다는 이유로
+    // 전혀 다른 와이너리의 와인이 올라오는 식).
+    if (identity > 0) {
+      if (extracted.region) {
+        const region = extracted.region.toLowerCase();
+        if (productName.includes(region) || exporter.includes(region)) score += 50;
       }
-      // Partial match in exporter field
-      else if (exporter.includes(extractedWinery) || extractedWinery.includes(exporter)) {
-        score += 80;
-      }
-      // Found in product name
-      else if (productName.includes(extractedWinery)) {
-        score += 60;
-      }
-      // Word-level matching (e.g., "Château Margaux" vs "Margaux")
-      else {
-        const wineryWords = extractedWinery.split(/\s+/);
-        const matchedWords = wineryWords.filter(word =>
-          word.length > 3 && (exporter.includes(word) || productName.includes(word))
-        );
-        score += matchedWords.length * 20;
-      }
-    }
 
-    // Priority 2: Region (50 points) - Equal with Region
-    if (extracted.region) {
-      const region = extracted.region.toLowerCase();
-      if (productName.includes(region) || exporter.includes(region)) {
-        score += 50;
+      if (extracted.grapeVariety) {
+        const grape = extracted.grapeVariety.toLowerCase();
+        if (productName.includes(grape) || exporter.includes(grape)) score += 50;
       }
-    }
 
-    // Priority 2: Grape Variety (50 points) - Equal with Region
-    if (extracted.grapeVariety) {
-      const grape = extracted.grapeVariety.toLowerCase();
-      if (productName.includes(grape) || exporter.includes(grape)) {
-        score += 50;
+      // 단어 경계 검사: "2018"이 "20180"에 걸리지 않도록.
+      if (extracted.vintage && hasNumberMatch(productName, [extracted.vintage])) {
+        score += 30;
       }
-    }
-
-    // Priority 3: Vintage (30 points) - Lowest
-    // 단어 경계 검사: "2018"이 "20180"에 걸리지 않도록.
-    if (extracted.vintage && hasNumberMatch(productName, [extracted.vintage])) {
-      score += 30;
     }
 
     return { product: c, score };
@@ -394,39 +438,19 @@ function prioritizeSakeByMetadata(
 ): Product[] {
   // Score each candidate
   const scored = candidates.map(c => {
-    let score = 0;
     const productName = c.reported_product_name.toLowerCase();
     const dbExporter = (c.exporter || '').toLowerCase();
 
-    // Priority 1: Exporter matching (NEW)
-    if (extracted.exporterEnglish) {
-      const extractedExporter = extracted.exporterEnglish.toLowerCase();
+    // 1단계: 실질 신호 (브랜드명 · 양조장명)
+    const identity = scoreIdentity(productName, dbExporter, extracted);
+    let score = identity;
 
-      // Perfect match
-      if (dbExporter === extractedExporter) {
-        score += 100;
-      }
-      // Partial match: "higashi shuzo" ⊂ "kinpo factory higashi shuzo"
-      else if (dbExporter.includes(extractedExporter) || extractedExporter.includes(dbExporter)) {
-        score += 80;
-      }
-      // Found in product name
-      else if (productName.includes(extractedExporter)) {
-        score += 60;
-      }
-      // Word-level matching: significant words (length > 3)
-      else {
-        const exporterWords = extractedExporter.split(/\s+/);
-        const significantWords = exporterWords.filter(w => w.length > 3);
-        const matchedWords = significantWords.filter(w =>
-          dbExporter.includes(w) || productName.includes(w)
-        );
-        score += matchedWords.length * 20;
-      }
-    }
-
-    // Priority 2: Number matching (등급·정미비율 등 식별성 있는 숫자만)
-    if (hasNumberMatch(productName, extracted.numbers)) {
+    // 2단계: 숫자는 단독으로 후보를 끌어올리지 못한다.
+    // 브랜드나 양조장이 이미 일치하는 후보들 사이에서 등급(정미비율 등)을
+    // 가르는 용도로만 쓴다. 2026-08-21 실측에서 "精米歩合55%"의 "55"가
+    // 무관한 제품 "하쿠로슈주 준마이 긴조 페어리 55"에 50점을 붙여 벡터가
+    // 1위로 찾아둔 정답을 밀어냈다.
+    if (identity > 0 && hasNumberMatch(productName, extracted.numbers)) {
       score += 50;
     }
 

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { isExtractionUsable, meaningfulNumbers, hasNumberMatch } from './search';
+import {
+  isExtractionUsable,
+  meaningfulNumbers,
+  hasNumberMatch,
+  significantExporterWords,
+  scoreIdentity,
+} from './search';
 import type { ExtractedLabelInfo } from '../types';
 
 const mockEnv = {
@@ -67,6 +73,58 @@ describe('Search Service', () => {
 
     expect(filtered.length).toBe(1);
     expect(filtered[0].volume).toBe(720);
+  });
+});
+
+describe('Metadata identity scoring', () => {
+  function extraction(overrides: Partial<ExtractedLabelInfo> = {}): ExtractedLabelInfo {
+    return {
+      productType: 'Sake', brand: '', brandKorean: '', brandEnglish: '',
+      exporterEnglish: '', exporterOriginal: '', numbers: [], volume: '',
+      rawText: '', confidence: 80, ...overrides,
+    };
+  }
+
+  it('drops generic brewery tokens from word-level matching', () => {
+    // "shuzo"(酒造)는 거의 모든 일본 양조장 이름에 들어가 식별력이 없다.
+    expect(significantExporterWords('higashi shuzo co., ltd.')).toEqual(['higashi']);
+    expect(significantExporterWords('kimura shuzo')).toEqual(['kimura']);
+  });
+
+  // 회귀: exporterEnglish가 "Higashi Shuzo Co., Ltd."였을 때 "shuzo"가
+  // 무관한 양조장에 걸려 마코토 쥰마이다이긴죠가 1위로 올라왔다.
+  it('gives no identity score to an unrelated product sharing only a generic token', () => {
+    const label = extraction({
+      brandKorean: '카츠 신 무테카츠류',
+      brandEnglish: 'Katsu Mutekatsuryu',
+      exporterEnglish: 'Higashi Shuzo Co., Ltd.',
+    });
+
+    expect(scoreIdentity('마코토 쥰마이다이긴죠 (makoto junmaidaiginjo)', 'makoto shuzo', label)).toBe(0);
+  });
+
+  it('scores the correct product via brand name in either script', () => {
+    const label = extraction({
+      brandKorean: '후쿠코마치',
+      brandEnglish: 'Fukukomachi',
+      exporterEnglish: 'Kimura Shuzo',
+    });
+
+    expect(
+      scoreIdentity('후쿠코마치 쥰마이 카라구치 (fukukomachi junmai karakuchi)', '', label)
+    ).toBeGreaterThanOrEqual(100);
+  });
+
+  // 회귀: dbExporter가 ''일 때 extractedExporter.includes('')가 true라서
+  // exporter 없는 행 전부에 80점이 붙었다.
+  it('does not score an empty DB exporter as a partial match', () => {
+    const label = extraction({ exporterEnglish: 'Kimura Shuzo' });
+    expect(scoreIdentity('전혀 다른 제품', '', label)).toBe(0);
+  });
+
+  it('scores an exact exporter match highest', () => {
+    const label = extraction({ exporterEnglish: 'Kimura Shuzo' });
+    expect(scoreIdentity('아무 제품', 'kimura shuzo', label)).toBe(100);
   });
 });
 
