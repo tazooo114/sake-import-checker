@@ -116,7 +116,7 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
     };
   }
 
-  const searchText = buildSearchText(extracted);
+  const searchText = buildMirroredSearchText(extracted);
   console.log('[SEARCH] Search text:', searchText);
 
   let embedding: number[];
@@ -148,6 +148,8 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
   if (candidates.length > 0) {
     console.log('[SEARCH] Top candidate:', candidates[0].reported_product_name, 'Similarity:', candidates[0].similarity);
   }
+
+  await logShadowComparison(env, extracted, searchText, candidates[0]);
 
   const reorderedCandidates = prioritizeByMetadata(candidates, extracted);
   console.log('[SEARCH] After metadata prioritization, top is:', reorderedCandidates[0].reported_product_name);
@@ -273,7 +275,85 @@ export function isExtractionUsable(extracted: ExtractedLabelInfo): boolean {
   return Boolean(extracted.rawText || extracted.brand);
 }
 
-function buildSearchText(extracted: ExtractedLabelInfo): string {
+/**
+ * 임시 계측: 기존 방식과 미러링 방식의 벡터 검색 결과를 같은 사진에서 비교한다.
+ *
+ * 두 방식을 서로 다른 사진으로 비교하면 조명·각도 차이가 섞여 판단이 안 된다.
+ * 임베딩 1회와 RPC 1회를 추가로 쓰지만 임베딩 비용은 무시할 수준이다.
+ *
+ * **비교가 끝나면 이 함수와 buildLegacySearchText 호출부를 제거할 것.**
+ * 계측이 실패해도 실제 검색 경로에는 영향이 없어야 하므로 전부 삼킨다.
+ */
+async function logShadowComparison(
+  env: Env,
+  extracted: ExtractedLabelInfo,
+  usedText: string,
+  usedTop: Product | undefined
+): Promise<void> {
+  try {
+    const legacyText = buildLegacySearchText(extracted);
+    if (legacyText === usedText) {
+      console.log('[SHADOW] legacy text identical, skipped');
+      return;
+    }
+
+    const legacyEmbedding = await getEmbedding(env, legacyText);
+    const legacyCandidates = await vectorSearch(env, legacyEmbedding, 5, 0.5, extracted.productType);
+    const legacyTop = legacyCandidates[0];
+
+    console.log(
+      '[SHADOW] mirrored:', usedTop?.similarity?.toFixed(4) ?? 'none',
+      '|', usedTop?.reported_product_name ?? '-'
+    );
+    console.log(
+      '[SHADOW] legacy  :', legacyTop?.similarity?.toFixed(4) ?? 'none',
+      '|', legacyTop?.reported_product_name ?? '-'
+    );
+    console.log('[SHADOW] legacy text:', legacyText);
+  } catch (error) {
+    console.warn('[SHADOW] comparison failed (ignored):', error);
+  }
+}
+
+/**
+ * DB 쪽 임베딩 텍스트의 구조를 그대로 따라가는 검색어를 만든다.
+ *
+ * 업로드 시 임베딩되는 텍스트는 `admin.ts`에서 이렇게 만들어진다:
+ *
+ *   [krName, enName, Exporter, Origin Country].join(' ')
+ *
+ * 즉 DB 벡터에는 **한글명 · 영문명 · 양조장**만 들어 있고, 일본어 원문이나
+ * 라벨 자유 텍스트는 존재하지 않는다(엑셀에 해당 컬럼이 없다). 그런데 기존
+ * 검색어는 `brand`(한자 원문)와 `rawText`(라벨 전문)를 함께 넣고 있었다.
+ *
+ * 2026-08-21 실측에서 質의 텍스트가 이랬다:
+ *   "福小町 후쿠코마치 Fukukomachi Kimura Shuzo 福小町 秋田 木村 精米歩合55%"
+ * 여기서 秋田(현), 木村(양조가 성), 精米歩合55%(정미보합)는 DB 쪽에 대응물이
+ * 존재할 수 없는 성분이라, 벡터를 대응 가능한 방향에서 밀어낸다.
+ *
+ * 그래서 대응되는 필드만으로 검색어를 만든다. 다만 브랜드 추출이 통째로
+ * 실패했을 때는 기댈 곳이 필요하므로, 그 경우에만 원문·라벨 텍스트로 폴백한다.
+ */
+function buildMirroredSearchText(extracted: ExtractedLabelInfo): string {
+  const mirrored = [
+    extracted.brandKorean,     // DB의 krName에 대응
+    extracted.brandEnglish,    // DB의 enName에 대응
+    extracted.exporterEnglish, // DB의 Exporter에 대응 (와인은 와이너리명)
+  ].filter(Boolean);
+
+  if (mirrored.length > 0) {
+    return mirrored.join(' ');
+  }
+
+  // 폴백: 대응되는 필드가 하나도 없으면 원문이라도 쓴다.
+  return buildLegacySearchText(extracted);
+}
+
+/**
+ * 기존 검색어 생성 방식. buildMirroredSearchText와의 비교 계측용으로 남겨둔다.
+ * 미러링 방식이 검증되면 폴백 경로만 남기고 정리할 것.
+ */
+function buildLegacySearchText(extracted: ExtractedLabelInfo): string {
   if (extracted.productType === 'Wine' || extracted.productType === 'Etc-Wine') {
     // Wine search: prioritize winery, region, grape, vintage
     return [
