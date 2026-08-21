@@ -291,37 +291,25 @@ async function logShadowComparison(
   usedTop: Product | undefined
 ): Promise<void> {
   try {
-    // 1라운드(mirrored vs legacy) 결과: 유사도는 legacy가 근소하게 높았지만
-    // 1위 제품은 mirrored가 맞혔다. 福小町에서 legacy가 높았던 것은 한자 원문이
-    // 실제로 신호였을 가능성을 시사한다 — 다국어 임베딩 모델이 한자와 한글
-    // 표기를 가깝게 배치할 수 있다.
-    //
-    // 2라운드는 한자 brand는 남기고 rawText만 뺀 중간안과 비교한다.
-    const variantText = [
-      extracted.brand,           // 한자 원문 — 이번 라운드의 검증 대상
-      extracted.brandKorean,
-      extracted.brandEnglish,
-      extracted.exporterEnglish,
-    ].filter(Boolean).join(' ');
-
-    if (variantText === usedText) {
-      console.log('[SHADOW] variant text identical, skipped');
+    const legacyText = buildLegacySearchText(extracted);
+    if (legacyText === usedText) {
+      console.log('[SHADOW] legacy text identical, skipped');
       return;
     }
 
-    const variantEmbedding = await getEmbedding(env, variantText);
-    const variantCandidates = await vectorSearch(env, variantEmbedding, 5, 0.5, extracted.productType);
-    const variantTop = variantCandidates[0];
+    const legacyEmbedding = await getEmbedding(env, legacyText);
+    const legacyCandidates = await vectorSearch(env, legacyEmbedding, 5, 0.5, extracted.productType);
+    const legacyTop = legacyCandidates[0];
 
     console.log(
-      '[SHADOW] mirrored     :', usedTop?.similarity?.toFixed(4) ?? 'none',
+      '[SHADOW] mirrored:', usedTop?.similarity?.toFixed(4) ?? 'none',
       '|', usedTop?.reported_product_name ?? '-'
     );
     console.log(
-      '[SHADOW] mirrored+한자:', variantTop?.similarity?.toFixed(4) ?? 'none',
-      '|', variantTop?.reported_product_name ?? '-'
+      '[SHADOW] legacy  :', legacyTop?.similarity?.toFixed(4) ?? 'none',
+      '|', legacyTop?.reported_product_name ?? '-'
     );
-    console.log('[SHADOW] variant text:', variantText);
+    console.log('[SHADOW] legacy text:', legacyText);
   } catch (error) {
     console.warn('[SHADOW] comparison failed (ignored):', error);
   }

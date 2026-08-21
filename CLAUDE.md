@@ -19,12 +19,6 @@ PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" npx tsc --noEmit
 
 `nvm use`는 셸 세션 안에서만 유효하고, 각 명령이 새 셸에서 도는 환경에서는 넘어가지 않는다. 그래서 PATH 접두사 방식을 쓴다.
 
-**함정**: 환경변수 접두사는 **바로 뒤 명령 하나에만** 적용된다. `PATH="..." npx wrangler deploy && npx wrangler tail`에서 `tail`은 원래 PATH로 돌아가 Node 16으로 실행되어 실패한다. 명령을 이어붙일 때는 `export`를 쓸 것:
-
-```bash
-cd backend && export PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" && npx wrangler deploy && npx wrangler tail --format pretty
-```
-
 `backend/.nvmrc`(=20)와 `package.json`의 `engines.node`(>=20.0.0)가 이 제약을 기록하고 있다. 대화형 셸에서는 `cd backend && nvm use`로 한 번 전환하면 그 세션 동안은 접두사 없이 쓸 수 있다.
 
 ## sake-import-checker — 배포·운영
