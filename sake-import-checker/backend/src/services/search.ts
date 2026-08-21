@@ -220,6 +220,42 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
 // Search Text Builder (Type-Aware)
 // ============================================
 /**
+ * 용량·도수처럼 라벨 어디에나 있어서 제품을 구분하지 못하는 숫자.
+ * 매칭에 쓰면 무관한 제품에 가산점이 붙는다.
+ */
+const NON_IDENTIFYING_NUMBERS = new Set([
+  '180', '200', '300', '330', '375', '500', '640', '720', '750', '900', '1000', '1500', '1800',
+]);
+
+/**
+ * 가산점 계산에 쓸 만한 숫자만 남긴다.
+ *
+ * 프롬프트에서 numbers의 범위를 좁혔지만 모델 출력을 그대로 믿을 수는 없다.
+ * 실측에서 한 라벨의 numbers가 ["25","900","1","37","1","099","268","2020","251714"]로
+ * 나온 적이 있는데, 여기서 "1"은 이름에 1이 들어간 거의 모든 제품에 매칭되어
+ * 메타데이터 재정렬을 사실상 무작위로 만든다.
+ *
+ * - 2자리 미만은 버린다 (한 자리 숫자는 어디에나 걸린다)
+ * - 숫자가 아닌 문자열은 버린다
+ * - 용량성 숫자는 제외 목록으로 버린다
+ */
+export function meaningfulNumbers(numbers: string[]): string[] {
+  return numbers.filter(n => /^\d{2,}$/.test(n) && !NON_IDENTIFYING_NUMBERS.has(n));
+}
+
+/**
+ * 제품명에 해당 숫자가 "독립된 수"로 등장하는지 본다.
+ *
+ * 단순 `includes`는 "23"을 "2023 빈티지"에, "39"를 "1390"에 매칭시킨다.
+ * 앞뒤가 숫자가 아닐 때만 일치로 친다.
+ */
+export function hasNumberMatch(productName: string, numbers: string[]): boolean {
+  return meaningfulNumbers(numbers).some(num =>
+    new RegExp(`(?<!\\d)${num}(?!\\d)`).test(productName)
+  );
+}
+
+/**
  * 추출 결과를 검색어 재료로 쓸 수 있는지 판정한다.
  *
  * 추출이 실패하면 `createEmptyExtraction`이 confidence 0 + errorType이 채워진 객체를
@@ -332,10 +368,9 @@ function prioritizeWineByMetadata(
     }
 
     // Priority 3: Vintage (30 points) - Lowest
-    if (extracted.vintage) {
-      if (productName.includes(extracted.vintage)) {
-        score += 30;
-      }
+    // 단어 경계 검사: "2018"이 "20180"에 걸리지 않도록.
+    if (extracted.vintage && hasNumberMatch(productName, [extracted.vintage])) {
+      score += 30;
     }
 
     return { product: c, score };
@@ -390,12 +425,9 @@ function prioritizeSakeByMetadata(
       }
     }
 
-    // Priority 2: Number matching (existing logic)
-    if (extracted.numbers.length > 0) {
-      const hasNumberMatch = extracted.numbers.some(num => productName.includes(num));
-      if (hasNumberMatch) {
-        score += 50;
-      }
+    // Priority 2: Number matching (등급·정미비율 등 식별성 있는 숫자만)
+    if (hasNumberMatch(productName, extracted.numbers)) {
+      score += 50;
     }
 
     return { product: c, score };

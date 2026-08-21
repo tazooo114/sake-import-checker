@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { isExtractionUsable } from './search';
+import { isExtractionUsable, meaningfulNumbers, hasNumberMatch } from './search';
 import type { ExtractedLabelInfo } from '../types';
 
 const mockEnv = {
@@ -67,6 +67,55 @@ describe('Search Service', () => {
 
     expect(filtered.length).toBe(1);
     expect(filtered[0].volume).toBe(720);
+  });
+});
+
+describe('Number matching', () => {
+  // 2026-08-21 운영 로그에서 실제로 추출된 numbers (焼酎 라벨 1장).
+  // 도수, 용량, 주소 번지, 전화번호 조각, 관리번호가 전부 섞여 있었다.
+  const REAL_NOISY_NUMBERS = ['25', '900', '1', '37', '1', '099', '268', '2020', '251714'];
+
+  it('drops single-digit numbers', () => {
+    // "1"은 이름에 1이 들어간 거의 모든 제품에 매칭되어 재정렬을 무작위로 만든다.
+    expect(meaningfulNumbers(['1', '7', '23'])).toEqual(['23']);
+  });
+
+  it('drops volume-like numbers', () => {
+    expect(meaningfulNumbers(['720', '1800', '750', '900'])).toEqual([]);
+  });
+
+  it('keeps grade numbers used in sake product names', () => {
+    expect(meaningfulNumbers(['23', '39', '45'])).toEqual(['23', '39', '45']);
+  });
+
+  it('drops non-numeric strings', () => {
+    expect(meaningfulNumbers(['23도', 'ABC', '', '2 3'])).toEqual([]);
+  });
+
+  it('filters the real noisy extraction down to identifying numbers', () => {
+    // 도수 25와 전화번호 조각 099/268은 프롬프트 수정으로 걸러지길 기대하지만,
+    // 코드 단에서는 자릿수 규칙만으로 거를 수 있는 것까지만 처리한다.
+    expect(meaningfulNumbers(REAL_NOISY_NUMBERS)).not.toContain('1');
+    expect(meaningfulNumbers(REAL_NOISY_NUMBERS)).not.toContain('900');
+  });
+
+  it('does not match a number embedded in a longer number', () => {
+    // 회귀: 기존 includes()는 "23"을 "2023 빈티지"에 매칭시켰다.
+    expect(hasNumberMatch('닷사이 2023 빈티지', ['23'])).toBe(false);
+    expect(hasNumberMatch('샤또 20180', ['2018'])).toBe(false);
+  });
+
+  it('matches a number that stands alone in the product name', () => {
+    expect(hasNumberMatch('닷사이 23 준마이다이긴조', ['23'])).toBe(true);
+    expect(hasNumberMatch('닷사이 39 준마이다이긴조', ['39', '45'])).toBe(true);
+  });
+
+  it('returns false when every extracted number was filtered out', () => {
+    expect(hasNumberMatch('이모쇼츄 카츠 블루라벨(900ml)', ['1', '900'])).toBe(false);
+  });
+
+  it('returns false for an empty numbers array', () => {
+    expect(hasNumberMatch('닷사이 23', [])).toBe(false);
   });
 });
 
