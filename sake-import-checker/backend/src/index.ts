@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types';
-import type { PhotoQueueMessage } from './types';
+import type { QueueMessage } from './types';
 import { handleTelegramWebhook, handleSetWebhook } from './handlers/telegram';
 import { handleInitUpload, handleUploadChunk, handleStats } from './handlers/admin';
 import { handleHealth } from './handlers/health';
@@ -58,7 +58,7 @@ export default {
   },
 
   // Queue Consumer Handler (사진 순차 처리)
-  async queue(batch: MessageBatch<PhotoQueueMessage>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     await handlePhotoQueue(batch, env);
   },
 };
