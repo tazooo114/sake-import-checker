@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env, TelegramUpdate, TelegramMessage, TelegramPhotoSize } from '../types';
-import { sendMessage, getFileUrl } from '../services/telegram';
+import { sendMessage, getFileUrl, setWebhook } from '../services/telegram';
 
 // ============================================
 // Webhook 발신자 검증
@@ -23,6 +23,44 @@ function isFromTelegram(c: Context<{ Bindings: Env }>): boolean {
   }
 
   return c.req.header('X-Telegram-Bot-Api-Secret-Token') === expected;
+}
+
+// ============================================
+// 웹훅 등록 (관리자용)
+//
+// setWebhook에는 봇 토큰과 secret_token이 모두 필요한데, 둘 다 Worker가
+// 이미 시크릿으로 갖고 있다. 그러니 Worker가 자기 웹훅을 직접 등록하게 하면
+// 운영자가 토큰을 어딘가에서 찾아와 셸 히스토리에 남길 이유가 없다.
+//
+// 순서 주의: TELEGRAM_WEBHOOK_SECRET을 wrangler secret으로 넣은 뒤 이 엔드포인트를
+// 호출하기까지의 사이에는, Worker는 헤더를 요구하는데 Telegram은 아직 보내지 않는
+// 상태가 된다. 그동안 들어온 메시지는 무시된다. 두 작업을 연달아 하면 몇 초다.
+// ============================================
+export async function handleSetWebhook(c: Context<{ Bindings: Env }>) {
+  const authHeader = c.req.header('Authorization');
+  if (authHeader !== `Bearer ${c.env.ADMIN_PASSWORD}`) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  if (!c.env.TELEGRAM_WEBHOOK_SECRET) {
+    return c.json({
+      error: 'TELEGRAM_WEBHOOK_SECRET이 설정되지 않았습니다. ' +
+        'wrangler secret put TELEGRAM_WEBHOOK_SECRET 을 먼저 실행하세요.',
+    }, 400);
+  }
+
+  // 요청이 도달한 오리진을 그대로 쓴다. 도메인을 하드코딩하지 않기 위함.
+  const webhookUrl = new URL('/telegram-webhook', c.req.url).toString();
+
+  const result = await setWebhook(c.env, webhookUrl, c.env.TELEGRAM_WEBHOOK_SECRET);
+
+  if (!result.ok) {
+    console.error('[TELEGRAM_WEBHOOK] setWebhook failed:', result.description);
+    return c.json({ ok: false, url: webhookUrl, error: result.description }, 502);
+  }
+
+  console.log('[TELEGRAM_WEBHOOK] setWebhook registered:', webhookUrl);
+  return c.json({ ok: true, url: webhookUrl, secretConfigured: true });
 }
 
 export async function handleTelegramWebhook(c: Context<{ Bindings: Env }>) {

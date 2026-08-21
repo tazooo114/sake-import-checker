@@ -369,6 +369,26 @@ JSON을 POST하면, 봇이 임의의 `chat_id`로 메시지를 보내거나 Gemi
 `X-Telegram-Bot-Api-Secret-Token` 헤더를 실어 보내고, Worker가 이를 대조해
 일치하지 않는 요청을 무시합니다 (`handlers/telegram.ts`의 `isFromTelegram`).
 
+### 5.2 봇 토큰을 모를 때 — Worker가 직접 등록
+
+`setWebhook`에는 봇 토큰과 `secret_token`이 모두 필요한데, 둘 다 Worker가 이미 시크릿으로 갖고 있습니다. 토큰을 찾아와 셸에 입력할 필요 없이 관리자 엔드포인트를 호출하면 됩니다.
+
+```bash
+# ① Worker에 secret 등록 (stdin으로 받으므로 히스토리에 안 남는다)
+cd backend && export PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH"
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+
+# ② Worker가 자기 웹훅을 Telegram에 등록
+curl -s -X POST "https://sake-import-checker.<subdomain>.workers.dev/admin/set-webhook" \
+  -H "Authorization: Bearer <ADMIN_PASSWORD>"
+```
+
+성공하면 `{"ok":true,"url":"...","secretConfigured":true}`가 돌아옵니다.
+
+> **순서 주의**: ①과 ② 사이에는 Worker가 헤더를 요구하는데 Telegram은 아직 보내지 않는 구간이 생겨, 그동안 들어온 메시지가 무시됩니다. 두 명령을 연달아 실행하면 몇 초입니다. 봇 토큰을 알고 있어 무중단으로 하고 싶다면 5.1의 수동 `setWebhook`을 먼저 하고 그 다음 ①을 하세요.
+
+봇 토큰을 직접 확인해야 한다면 Telegram에서 **@BotFather → `/mybots` → 봇 선택 → API Token**. **Revoke는 누르지 마세요** — 새 토큰이 발급되면 `TELEGRAM_BOT_TOKEN` 시크릿도 함께 갱신해야 합니다.
+
 ### 5.2 값을 바꾸거나 잊었을 때
 
 두 값이 어긋나면 봇이 **모든 메시지에 무응답**이 됩니다(에러 없이 조용히 무시).

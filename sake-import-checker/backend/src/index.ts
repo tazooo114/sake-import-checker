@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types';
 import type { PhotoQueueMessage } from './types';
-import { handleTelegramWebhook } from './handlers/telegram';
+import { handleTelegramWebhook, handleSetWebhook } from './handlers/telegram';
 import { handleInitUpload, handleUploadChunk, handleStats } from './handlers/admin';
 import { handleHealth } from './handlers/health';
 import { handlePhotoQueue } from './handlers/queueConsumer';
@@ -26,6 +26,7 @@ app.post('/telegram-webhook', handleTelegramWebhook);
 app.post('/admin/upload-init', handleInitUpload);
 app.post('/admin/upload-chunk', handleUploadChunk);
 app.get('/admin/stats', handleStats);
+app.post('/admin/set-webhook', handleSetWebhook);
 
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 app.onError((err, c) => {

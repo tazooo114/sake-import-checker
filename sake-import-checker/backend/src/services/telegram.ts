@@ -22,6 +22,26 @@ export async function sendMessage(
   });
 }
 
+/**
+ * 웹훅 URL과 secret_token을 Telegram에 등록한다.
+ *
+ * secret_token을 넘기면 Telegram이 이후 모든 웹훅 요청에
+ * X-Telegram-Bot-Api-Secret-Token 헤더를 실어 보낸다.
+ */
+export async function setWebhook(
+  env: Env,
+  url: string,
+  secretToken: string
+): Promise<{ ok: boolean; description?: string }> {
+  const response = await fetch(`${TELEGRAM_API_BASE}${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, secret_token: secretToken }),
+  });
+
+  return await response.json() as { ok: boolean; description?: string };
+}
+
 export async function getFileUrl(env: Env, fileId: string): Promise<string> {
   const url = `${TELEGRAM_API_BASE}${env.TELEGRAM_BOT_TOKEN}/getFile`;
 
