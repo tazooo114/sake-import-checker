@@ -5,7 +5,9 @@ import {
   hasNumberMatch,
   significantExporterWords,
   scoreIdentity,
+  shouldSkipVerification,
 } from './search';
+import type { Product } from '../types';
 import type { ExtractedLabelInfo } from '../types';
 
 const mockEnv = {
@@ -73,6 +75,70 @@ describe('Search Service', () => {
 
     expect(filtered.length).toBe(1);
     expect(filtered[0].volume).toBe(720);
+  });
+});
+
+describe('shouldSkipVerification', () => {
+  function product(id: number, name: string, similarity: number): Product {
+    return {
+      id,
+      reported_product_name: name,
+      category: 'Sake',
+      exporter: null,
+      origin_country: null,
+      raw_importer_name: null,
+      value: null,
+      volume: null,
+      unit_price: null,
+      similarity,
+    };
+  }
+
+  // 2026-08-21 실측: 벡터 1위가 0.8544짜리 오답이고 정답은 2위(0.8172)였다.
+  // 재정렬이 브랜드 매칭으로 정답을 끌어올렸다.
+  const wrongButSimilar = product(1, '무관한 제품', 0.8544);
+  const correct = product(2, '이모쇼츄 카츠 블루라벨(900ml)', 0.8172);
+
+  it('does not skip when rerank disagrees with the vector top', () => {
+    // 두 신호가 다른 답을 가리킬 때가 검증이 가장 필요한 순간이다.
+    expect(shouldSkipVerification(wrongButSimilar, [correct, wrongButSimilar])).toBe(false);
+  });
+
+  it('does not skip on the vector top alone when it is high but rerank moved it', () => {
+    // 벡터 1위(0.8544)만 보고 판정하면 오답이 검증 없이 확정된다.
+    const reordered = [correct, wrongButSimilar];
+    expect(reordered[0].similarity).toBeLessThan(0.82);
+    expect(shouldSkipVerification(wrongButSimilar, reordered)).toBe(false);
+  });
+
+  it('skips when both signals agree and similarity is high', () => {
+    const top = product(1, '후쿠코마치 쥰마이 카라구치', 0.8343);
+    const second = product(2, '다른 제품', 0.8235);
+    expect(shouldSkipVerification(top, [top, second])).toBe(true);
+  });
+
+  it('does not skip when both agree but similarity is below threshold and gap is narrow', () => {
+    const top = product(1, '어떤 제품', 0.7900);
+    const second = product(2, '다른 제품', 0.7329);
+    expect(shouldSkipVerification(top, [top, second])).toBe(false);
+  });
+
+  it('skips at 0.8201 — just above the 0.82 threshold', () => {
+    // 실측값. 0.82를 아슬아슬하게 넘어 검증이 생략되는 구간이다.
+    const top = product(1, '후쿠코마치 쥰마이 카라구치', 0.8201);
+    const second = product(2, '다른 제품', 0.7329);
+    expect(shouldSkipVerification(top, [top, second])).toBe(true);
+  });
+
+  it('skips on a wide gap even below the absolute threshold', () => {
+    const top = product(1, '어떤 제품', 0.7800);
+    const second = product(2, '먼 후보', 0.6000);
+    expect(shouldSkipVerification(top, [top, second])).toBe(true);
+  });
+
+  it('handles a single candidate', () => {
+    const only = product(1, '유일한 후보', 0.8500);
+    expect(shouldSkipVerification(only, [only])).toBe(true);
   });
 });
 

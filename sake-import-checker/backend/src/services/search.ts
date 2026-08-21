@@ -156,17 +156,10 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
   const topCandidates = reorderedCandidates.slice(0, 3);
 
   const similarity = topCandidate.similarity ?? 0;
-
-  // High confidence Logic:
-  // 1. Absolute similarity is very high (>= 0.82)
-  // 2. OR Absolute similarity is reasonably high (>= 0.75) AND there is a significant gap (> 0.15) between 1st and 2nd candidate
   const secondSimilarity = reorderedCandidates.length > 1 ? (reorderedCandidates[1].similarity ?? 0) : 0;
   const similarityGap = similarity - secondSimilarity;
 
-  if (
-    similarity >= HIGH_CONFIDENCE_SKIP_THRESHOLD ||
-    (similarity >= 0.75 && similarityGap > 0.15)
-  ) {
+  if (shouldSkipVerification(candidates[0], reorderedCandidates)) {
     console.log('[SEARCH] High confidence match! Skipping verification. Similarity:', similarity, 'Gap:', similarityGap);
     return {
       found: true,
@@ -214,6 +207,37 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
     extractedInfo: extracted,
     message: '수입 목록에서 찾을 수 없습니다.',
   };
+}
+
+/**
+ * verifyMatch(Vision 호출)를 건너뛰어도 되는지 판정한다.
+ *
+ * **벡터 1위와 재정렬 1위가 같은 제품일 때만** 스킵한다. 둘이 다르다는 것은
+ * 두 신호가 서로 다른 답을 가리킨다는 뜻이고, 그때가 바로 검증이 필요한 순간이다.
+ *
+ * 이 조건이 없으면 어느 쪽으로든 오답이 확정될 수 있다. 2026-08-21 실측:
+ *
+ *   克 新 無手勝流 — 벡터 1위는 유사도 0.8544짜리 **오답**, 정답은 2위(0.8172).
+ *   재정렬이 브랜드 매칭으로 정답을 1위로 끌어올렸다.
+ *
+ * - 벡터 1위 기준으로 스킵을 판정하면: 0.8544 >= 0.82 → 검증 없이 오답 확정
+ * - 재정렬 1위 기준만 보면: 재정렬이 0.82 넘는 후보를 끌어올렸을 때 검증 없이 확정
+ * - 두 신호가 일치할 때만 스킵하면: 위 케이스는 불일치이므로 검증이 돌아 정답이 나온다
+ *
+ * 비용 영향은 작다. 정상 케이스(두 신호 일치)는 그대로 스킵되고, 불일치할 때만
+ * Vision 호출이 1회 추가된다.
+ */
+export function shouldSkipVerification(vectorTop: Product, reordered: Product[]): boolean {
+  const top = reordered[0];
+  if (top.id !== vectorTop.id) return false;
+
+  const similarity = top.similarity ?? 0;
+  const second = reordered.length > 1 ? (reordered[1].similarity ?? 0) : 0;
+
+  return (
+    similarity >= HIGH_CONFIDENCE_SKIP_THRESHOLD ||
+    (similarity >= 0.75 && similarity - second > 0.15)
+  );
 }
 
 // ============================================
@@ -289,10 +313,8 @@ export async function evaluateSearch(
     rerankedRank: findRank(reordered, expect),
     topSimilarity,
     similarityGap,
-    // 파이프라인(executeSearchPipeline)의 스킵 조건과 동일하게 유지할 것.
-    wouldSkipVerification:
-      topSimilarity >= HIGH_CONFIDENCE_SKIP_THRESHOLD ||
-      (topSimilarity >= 0.75 && similarityGap > 0.15),
+    // 파이프라인과 같은 함수를 쓴다. 조건을 복제하면 한쪽만 바뀌어 어긋난다.
+    wouldSkipVerification: shouldSkipVerification(candidates[0], reordered),
     candidateCount: candidates.length,
   };
 }
