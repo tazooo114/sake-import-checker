@@ -191,7 +191,10 @@ export async function extractLabelInfo(
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
-      return createEmptyExtraction(responseText, false, productType);
+      // 진단 정보는 로그로만 남긴다. 이 문자열을 추출 결과에 실어 보내면
+      // 그대로 검색어가 된다 (search.ts의 isExtractionUsable 주석 참조).
+      console.error('[Gemini] Response was not JSON:', responseText.slice(0, 200));
+      return createEmptyExtraction('PARSE_FAILED', productType);
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
@@ -223,13 +226,20 @@ export async function extractLabelInfo(
     const isRateLimit = error instanceof RateLimitError ||
       String(error).includes('429') ||
       String(error).includes('quota');
-    return createEmptyExtraction(String(error), isRateLimit, productType);
+    return createEmptyExtraction(isRateLimit ? 'RATE_LIMIT' : 'EXTRACTION_FAILED', productType);
   }
 }
 
+/**
+ * 추출 실패를 나타내는 빈 결과를 만든다.
+ *
+ * 진단 문자열(에러 메시지, 파싱 못 한 응답 등)은 **절대 여기에 담지 않는다**.
+ * 과거에는 rawText에 `String(error)`를 넣었는데, rawText가 검색어 재료라서
+ * "Error: Timeout after 20000ms" 같은 문자열이 그대로 임베딩되어 벡터 검색에
+ * 쓰였다. 진단은 호출부에서 로그로 남긴다.
+ */
 function createEmptyExtraction(
-  rawText: string,
-  isRateLimitError: boolean = false,
+  errorType: NonNullable<ExtractedLabelInfo['errorType']>,
   productType: ProductCategory = 'Sake'
 ): ExtractedLabelInfo {
   return {
@@ -241,9 +251,9 @@ function createEmptyExtraction(
     exporterOriginal: '',
     numbers: [],
     volume: '',
-    rawText: isRateLimitError ? '' : rawText,
+    rawText: '',
     confidence: 0,
-    errorType: isRateLimitError ? 'RATE_LIMIT' : undefined,
+    errorType,
   };
 }
 
@@ -355,6 +365,7 @@ ${candidateList}
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
+      console.error('[Gemini] Verification response was not JSON:', responseText.slice(0, 200));
       return { matchedIndex: 0, confidence: 0 };
     }
 

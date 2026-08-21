@@ -86,7 +86,9 @@ export interface ExtractedLabelInfo {
   volume: string;
   rawText: string;
   confidence: number;
-  errorType?: 'RATE_LIMIT';
+  // 추출이 실패한 경우에만 설정된다. 이 값이 있으면 confidence는 항상 0이고,
+  // 나머지 필드(rawText 포함)는 전부 빈 값이다 — 실패 산출물이 검색어로 흘러가지 않도록.
+  errorType?: 'RATE_LIMIT' | 'EXTRACTION_FAILED' | 'PARSE_FAILED';
 
   // Wine-specific metadata (extracted from label, used for search prioritization)
   region?: string;       // e.g., "Bordeaux", "Napa Valley"

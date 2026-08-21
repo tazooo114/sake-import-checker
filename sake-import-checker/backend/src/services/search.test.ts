@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { isExtractionUsable } from './search';
+import type { ExtractedLabelInfo } from '../types';
 
 const mockEnv = {
   TELEGRAM_BOT_TOKEN: 'test-token',
@@ -65,6 +67,59 @@ describe('Search Service', () => {
 
     expect(filtered.length).toBe(1);
     expect(filtered[0].volume).toBe(720);
+  });
+});
+
+describe('isExtractionUsable', () => {
+  function makeExtraction(overrides: Partial<ExtractedLabelInfo> = {}): ExtractedLabelInfo {
+    return {
+      productType: 'Sake',
+      brand: '獺祭',
+      brandKorean: '닷사이',
+      brandEnglish: 'Dassai',
+      exporterEnglish: 'Asahi Shuzo',
+      exporterOriginal: '旭酒造',
+      numbers: ['23'],
+      volume: '720ml',
+      rawText: '獺祭 純米大吟醸 二割三分 720ml',
+      confidence: 80,
+      ...overrides,
+    };
+  }
+
+  it('accepts a normal extraction', () => {
+    expect(isExtractionUsable(makeExtraction())).toBe(true);
+  });
+
+  // 회귀 테스트: 이 케이스가 예전에 가드를 통과해 에러 문자열이 임베딩됐다.
+  it('rejects a failed extraction even if rawText is non-empty', () => {
+    const failed = makeExtraction({
+      brand: '',
+      rawText: 'Error: Timeout after 20000ms',
+      confidence: 0,
+      errorType: 'EXTRACTION_FAILED',
+    });
+
+    expect(isExtractionUsable(failed)).toBe(false);
+  });
+
+  it('rejects rate-limited and parse-failed extractions', () => {
+    expect(isExtractionUsable(makeExtraction({ confidence: 0, errorType: 'RATE_LIMIT' }))).toBe(false);
+    expect(isExtractionUsable(makeExtraction({ confidence: 0, errorType: 'PARSE_FAILED' }))).toBe(false);
+  });
+
+  // errorType 없이 confidence만 0인 결과가 생겨도 검색으로 새지 않아야 한다.
+  it('rejects zero-confidence extractions without an errorType', () => {
+    expect(isExtractionUsable(makeExtraction({ confidence: 0 }))).toBe(false);
+  });
+
+  it('rejects an extraction with neither rawText nor brand', () => {
+    // Gemini가 정상 JSON을 반환했지만 전 필드가 빈 경우 (confidence 50)
+    expect(isExtractionUsable(makeExtraction({ brand: '', rawText: '', confidence: 50 }))).toBe(false);
+  });
+
+  it('accepts an extraction that has rawText but no brand', () => {
+    expect(isExtractionUsable(makeExtraction({ brand: '', confidence: 50 }))).toBe(true);
   });
 });
 

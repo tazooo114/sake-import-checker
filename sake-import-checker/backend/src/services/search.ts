@@ -101,15 +101,18 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
     };
   }
 
-  if (!extracted.rawText && !extracted.brand) {
-    console.log('[SEARCH] No text or brand extracted');
+  if (!isExtractionUsable(extracted)) {
+    console.log('[SEARCH] Extraction unusable. errorType:', extracted.errorType ?? 'none');
     return {
       found: false,
       confidence: 0,
       product: null,
       candidates: [],
       extractedInfo: extracted,
-      message: '라벨을 인식할 수 없습니다. 더 선명한 사진을 보내주세요.',
+      // 추출 자체가 실패한 것과 라벨을 못 읽은 것은 사용자가 취할 행동이 다르다.
+      message: extracted.errorType
+        ? '라벨 분석에 실패했습니다. 잠시 후 다시 시도해주세요.'
+        : '라벨을 인식할 수 없습니다. 더 선명한 사진을 보내주세요.',
     };
   }
 
@@ -216,6 +219,24 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
 // ============================================
 // Search Text Builder (Type-Aware)
 // ============================================
+/**
+ * 추출 결과를 검색어 재료로 쓸 수 있는지 판정한다.
+ *
+ * 추출이 실패하면 `createEmptyExtraction`이 confidence 0 + errorType이 채워진 객체를
+ * 돌려준다. 예전에는 그 객체의 rawText에 에러 메시지가 담겨 있었고, 가드가
+ * `!rawText && !brand`뿐이라 이 상태가 그대로 통과했다. 그 결과
+ * "Error: Timeout after 20000ms"를 임베딩해 벡터 검색을 돌리고, 유사도 0.5를 넘긴
+ * 무관한 제품이 후보로 올라와 오답으로 확정될 여지가 있었다.
+ *
+ * errorType과 confidence를 둘 다 보는 것은 의도적이다. 지금은 두 조건이 같이 움직이지만,
+ * 나중에 다른 경로로 confidence 0짜리 결과가 만들어져도 검색으로 새지 않게 한다.
+ */
+export function isExtractionUsable(extracted: ExtractedLabelInfo): boolean {
+  if (extracted.errorType) return false;
+  if (extracted.confidence === 0) return false;
+  return Boolean(extracted.rawText || extracted.brand);
+}
+
 function buildSearchText(extracted: ExtractedLabelInfo): string {
   if (extracted.productType === 'Wine' || extracted.productType === 'Etc-Wine') {
     // Wine search: prioritize winery, region, grape, vintage
