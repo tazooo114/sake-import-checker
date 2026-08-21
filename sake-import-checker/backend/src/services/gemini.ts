@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Env, ExtractedLabelInfo, ProductCategory } from '../types';
 import { logErrorAndNotify } from '../utils/logger';
 
@@ -16,37 +15,135 @@ class RateLimitError extends Error {
   }
 }
 
+interface GenerateContentResponse {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    totalTokenCount?: number;
+  };
+}
+
+/**
+ * thinking을 지원하는 모델에만 thinkingConfig를 붙인다.
+ *
+ * `gemini-2.0-flash`(FALLBACK_MODEL)는 thinking이 없고, 이 필드를 받았을 때
+ * 무시하는지 400으로 거절하는지 확인되지 않았다. 폴백 경로는 primary가 이미 실패한
+ * 뒤에만 타므로 여기서 터지면 장애가 이중이 된다. 확실한 쪽만 보낸다.
+ */
+function supportsThinking(modelName: string): boolean {
+  return modelName.startsWith('gemini-2.5');
+}
+
+/**
+ * REST로 generateContent를 호출한다.
+ *
+ * 레거시 SDK(`@google/generative-ai@0.21`)는 `thinkingConfig`를 지원하지 않는데,
+ * gemini-2.5-flash는 thinking이 기본 활성화라 호출마다 보이지 않는 thinking 토큰이
+ * output 단가로 과금된다. 라벨 추출·후보 선택에는 불필요한 비용이라 REST로 직접
+ * 호출해 `thinkingBudget: 0`을 지정한다. 임베딩(getEmbedding)이 쓰던 패턴과 동일하다.
+ */
+async function generateContentREST(
+  env: Env,
+  modelName: string,
+  prompt: string,
+  base64Image: string,
+  mimeType: string
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  const generationConfig: Record<string, unknown> = {
+    // 추출·선택 작업에 샘플링 다양성은 손해다.
+    temperature: 0,
+  };
+  if (supportsThinking(modelName)) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64Image } },
+          ],
+        }],
+        generationConfig,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      // REST에서는 상태 코드로 직접 판별한다 (기존의 문자열 매칭보다 확실).
+      if (response.status === 429) {
+        throw new RateLimitError(`${modelName} rate limited: ${errorText.slice(0, 200)}`);
+      }
+      throw new Error(`${modelName} HTTP ${response.status}: ${errorText.slice(0, 200)}`);
+    }
+
+    const data = await response.json() as GenerateContentResponse;
+
+    // thinkingBudget이 실제로 먹었는지는 thoughtsTokenCount로만 확인할 수 있다.
+    // 0이 아니면 설정이 무시된 것이므로 이 로그를 반드시 확인할 것.
+    const usage = data.usageMetadata;
+    if (usage) {
+      console.log(
+        `[Gemini] ${modelName} tokens — prompt: ${usage.promptTokenCount ?? '?'}, ` +
+        `output: ${usage.candidatesTokenCount ?? '?'}, thoughts: ${usage.thoughtsTokenCount ?? 0}`
+      );
+    }
+
+    const candidate = data.candidates?.[0];
+    const text = (candidate?.content?.parts ?? [])
+      .map(part => part.text ?? '')
+      .join('');
+
+    if (!text) {
+      // finishReason이 MAX_TOKENS면 상한이 너무 낮은 것이다.
+      throw new Error(
+        `${modelName} returned no text (finishReason: ${candidate?.finishReason ?? 'unknown'})`
+      );
+    }
+
+    return text;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Timeout after ${GENERATE_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function generateContentWithFallback(
   env: Env,
   prompt: string,
   base64Image: string,
   mimeType: string
-) {
-  const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+): Promise<string> {
   const models = [PRIMARY_MODEL, FALLBACK_MODEL];
   let lastRateLimitError: Error | null = null;
 
   for (const modelName of models) {
     try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout after ${GENERATE_TIMEOUT_MS}ms`)), GENERATE_TIMEOUT_MS)
-      );
-
-      const result = await Promise.race([
-        model.generateContent([
-          { text: prompt },
-          { inlineData: { mimeType, data: base64Image } },
-        ]),
-        timeoutPromise
-      ]) as any;
-
-      return result;
+      return await generateContentREST(env, modelName, prompt, base64Image, mimeType);
     } catch (error: any) {
       console.warn(`[Gemini] ${modelName} failed: ${error}`);
 
       const errorStr = String(error);
-      if (errorStr.includes('429') || errorStr.includes('quota')) {
+      if (error instanceof RateLimitError || errorStr.includes('429') || errorStr.includes('quota')) {
         lastRateLimitError = error;
       }
 
@@ -83,8 +180,7 @@ export async function detectProductType(
 `.trim();
 
   try {
-    const result = await generateContentWithFallback(env, prompt, base64Image, mimeType);
-    const responseText = result.response.text().trim();
+    const responseText = (await generateContentWithFallback(env, prompt, base64Image, mimeType)).trim();
 
     console.log('[Gemini] Product type detection result:', responseText);
 
@@ -186,8 +282,7 @@ export async function extractLabelInfo(
     : getSakeExtractionPrompt();
 
   try {
-    const result = await generateContentWithFallback(env, prompt, base64Image, mimeType);
-    const responseText = result.response.text();
+    const responseText = await generateContentWithFallback(env, prompt, base64Image, mimeType);
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -360,8 +455,7 @@ ${candidateList}
 `.trim();
 
   try {
-    const result = await generateContentWithFallback(env, prompt, base64Image, mimeType);
-    const responseText = result.response.text();
+    const responseText = await generateContentWithFallback(env, prompt, base64Image, mimeType);
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
