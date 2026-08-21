@@ -31,7 +31,9 @@ export async function handlePhotoQueue(
                     console.log(
                         `[EVAL] ${row.pass ? 'PASS' : 'FAIL'} ${row.name} — ` +
                         `vector ${row.vectorRank} → reranked ${row.rerankedRank} ` +
-                        `sim ${row.topSimilarity?.toFixed(4) ?? '-'} gap ${row.similarityGap?.toFixed(4) ?? '-'}` +
+                        `sim ${row.topSimilarity?.toFixed(4) ?? '-'} gap ${row.similarityGap?.toFixed(4) ?? '-'} ` +
+                        // 임계값 튜닝의 핵심 지표. skip=Y면 Vision 검증 없이 확정된다.
+                        `skip=${row.wouldSkipVerification ? 'Y' : 'N'}` +
                         `${row.rerankHurt ? ' (RERANK HURT)' : ''}` +
                         `${row.error ? ' ERROR: ' + row.error.slice(0, 120) : ''}`
                     );
