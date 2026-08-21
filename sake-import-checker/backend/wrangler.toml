@@ -20,6 +20,7 @@ RATE_LIMIT_PER_MINUTE = 15
 # - SUPABASE_URL
 # - SUPABASE_KEY
 # - ADMIN_PASSWORD
+# - TELEGRAM_WEBHOOK_SECRET  (setWebhook의 secret_token과 동일한 값)
 
 # Build configuration
 [build]

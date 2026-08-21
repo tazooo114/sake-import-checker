@@ -5,6 +5,9 @@ export interface Env {
   SUPABASE_KEY: string;
   ADMIN_PASSWORD: string;
   ADMIN_CHAT_ID?: string;
+  // setWebhook의 secret_token과 반드시 같은 값이어야 한다.
+  // 설정되지 않으면 웹훅 검증을 건너뛴다 (기존 동작 유지).
+  TELEGRAM_WEBHOOK_SECRET?: string;
   ENVIRONMENT: string;
   PHOTO_QUEUE: Queue<PhotoQueueMessage>;
 }

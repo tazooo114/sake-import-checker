@@ -324,7 +324,15 @@ wrangler secret put SUPABASE_KEY
 
 wrangler secret put ADMIN_PASSWORD
 # 관리자 비밀번호 설정
+
+wrangler secret put TELEGRAM_WEBHOOK_SECRET
+# 웹훅 발신자 검증용 임의 문자열 (아래 5장에서 같은 값을 다시 씁니다)
+# 생성 예: openssl rand -hex 32
+# 허용 문자: A-Z a-z 0-9 _ -  (1~256자)
 ```
+
+> `TELEGRAM_WEBHOOK_SECRET`은 **5장에서 `setWebhook`에 넘길 값과 반드시 같아야**
+> 합니다. 값을 지금 만들어 어딘가에 적어두세요.
 
 ### 4.3 배포
 ```bash
@@ -337,15 +345,57 @@ wrangler deploy
 
 ## 5. Telegram Webhook 설정
 
+`secret_token`에는 **4.2에서 `TELEGRAM_WEBHOOK_SECRET`으로 넣은 값과 똑같은
+문자열**을 넘겨야 합니다.
+
 ```bash
 curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook" \
-  -d "url=https://sake-import-checker.your-subdomain.workers.dev/telegram-webhook"
+  -d "url=https://sake-import-checker.your-subdomain.workers.dev/telegram-webhook" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET과 동일한 값>"
 ```
 
 성공 응답:
 ```json
 {"ok":true,"result":true,"description":"Webhook was set"}
 ```
+
+### 5.1 secret_token은 왜 필요한가
+
+웹훅 URL은 인증이 없는 공개 엔드포인트입니다. 주소를 알아낸 제3자가 가짜 update
+JSON을 POST하면, 봇이 임의의 `chat_id`로 메시지를 보내거나 Gemini 할당량을
+소진하게 만들 수 있습니다.
+
+`secret_token`을 등록하면 Telegram이 매 요청에
+`X-Telegram-Bot-Api-Secret-Token` 헤더를 실어 보내고, Worker가 이를 대조해
+일치하지 않는 요청을 무시합니다 (`handlers/telegram.ts`의 `isFromTelegram`).
+
+### 5.2 값을 바꾸거나 잊었을 때
+
+두 값이 어긋나면 봇이 **모든 메시지에 무응답**이 됩니다(에러 없이 조용히 무시).
+이때는 양쪽을 새 값으로 다시 맞추면 됩니다.
+
+```bash
+# 1) Worker 쪽 갱신
+wrangler secret put TELEGRAM_WEBHOOK_SECRET
+
+# 2) Telegram 쪽 갱신 (같은 값)
+curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook" \
+  -d "url=https://sake-import-checker.your-subdomain.workers.dev/telegram-webhook" \
+  -d "secret_token=<새 값>"
+```
+
+현재 등록 상태는 `getWebhookInfo`로 확인할 수 있습니다. 다만 응답에
+`secret_token` 값 자체는 표시되지 않고, 설정 여부만 알 수 있습니다.
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
+```
+
+> **기존 봇을 운영 중이라면**: `TELEGRAM_WEBHOOK_SECRET`을 설정하지 않은 상태에서는
+> Worker가 검증을 건너뛰고 기존처럼 동작합니다(로그에 경고만 남습니다). 따라서
+> 배포 순서 때문에 봇이 멈추는 일은 없습니다. 다만 **secret을 넣은 뒤에는 반드시
+> `setWebhook`도 다시 호출**해야 합니다. Worker에만 넣고 Telegram 쪽을 갱신하지
+> 않으면 그때부터 모든 요청이 차단됩니다.
 
 ---
 

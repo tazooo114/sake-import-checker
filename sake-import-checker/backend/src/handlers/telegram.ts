@@ -2,8 +2,37 @@ import type { Context } from 'hono';
 import type { Env, TelegramUpdate, TelegramMessage, TelegramPhotoSize } from '../types';
 import { sendMessage, getFileUrl } from '../services/telegram';
 
+// ============================================
+// Webhook 발신자 검증
+// setWebhook에 secret_token을 등록하면 Telegram이 매 요청에
+// X-Telegram-Bot-Api-Secret-Token 헤더를 실어 보낸다.
+// 이 헤더가 없으면 URL을 알아낸 제3자가 가짜 update를 넣을 수 있다.
+//
+// TELEGRAM_WEBHOOK_SECRET이 설정되지 않은 환경에서는 검증을 건너뛴다.
+// (secret을 등록하기 전에 배포되어 봇이 죽는 것을 막기 위함)
+// ============================================
+function isFromTelegram(c: Context<{ Bindings: Env }>): boolean {
+  const expected = c.env.TELEGRAM_WEBHOOK_SECRET;
+
+  if (!expected) {
+    console.warn(
+      '[TELEGRAM_WEBHOOK] TELEGRAM_WEBHOOK_SECRET이 설정되지 않아 발신자 검증을 건너뜁니다. ' +
+      'wrangler secret put TELEGRAM_WEBHOOK_SECRET 후 setWebhook에 같은 값을 등록하세요.'
+    );
+    return true;
+  }
+
+  return c.req.header('X-Telegram-Bot-Api-Secret-Token') === expected;
+}
+
 export async function handleTelegramWebhook(c: Context<{ Bindings: Env }>) {
   try {
+    if (!isFromTelegram(c)) {
+      console.warn('[TELEGRAM_WEBHOOK] Rejected request with invalid secret token');
+      // 401을 주면 상대가 검증 존재 여부를 알 수 있으므로 200으로 조용히 무시한다
+      return c.json({ ok: true });
+    }
+
     const update: TelegramUpdate = await c.req.json();
 
     if (update.message?.photo) {

@@ -372,7 +372,7 @@ Gemini 추출  {winery:"Chateau Margaux", region:"Bordeaux", vintage:"2018"}
 
 | 연결 | 방식 | 인증 |
 |---|---|---|
-| Telegram → Worker | Webhook (`setWebhook`으로 URL 등록, polling 아님) | **없음** (아래 참고) |
+| Telegram → Worker | Webhook (`setWebhook`으로 URL 등록, polling 아님) | `X-Telegram-Bot-Api-Secret-Token` 헤더 대조 |
 | Worker → Telegram | Bot API HTTPS | `TELEGRAM_BOT_TOKEN` (Worker secret) |
 | Pages → Worker | `fetch` + CORS (`*.pages.dev`, localhost 허용) | `Authorization: Bearer <ADMIN_PASSWORD>` |
 | Worker → Supabase | `@supabase/supabase-js` → PostgREST HTTPS | `SUPABASE_KEY` (Worker secret) |
@@ -388,13 +388,25 @@ Queues 자체는 분산 서비스라 내부적으로는 네트워크를 타지�
 헤더를 코드에서 다룰 필요가 없습니다.** 자격 증명이 코드나 secret에 등장하지 않는다는
 점이 외부 API 호출과 다른 지점입니다.
 
-> **알려진 취약점 — 웹훅에 검증이 없습니다.**
-> `/telegram-webhook`은 요청이 정말 Telegram에서 왔는지 확인하지 않습니다.
-> URL을 아는 사람은 누구나 가짜 update JSON을 POST해 봇이 임의의 `chat_id`로
-> 메시지를 보내게 하거나 Gemini 할당량을 소진시킬 수 있습니다.
-> Telegram은 이를 막으라고 `setWebhook`의 `secret_token` 옵션을 제공하며,
-> 지정하면 매 요청에 `X-Telegram-Bot-Api-Secret-Token` 헤더가 실려 옵니다.
-> 현재 코드는 이 헤더를 검사하지 않습니다.
+**웹훅 발신자 검증**: `/telegram-webhook`은 URL만 알면 누구나 POST할 수 있는 공개
+엔드포인트라, 그 자체로는 요청이 Telegram에서 왔는지 알 수 없습니다. 이를 막기 위해
+`setWebhook`에 `secret_token`을 등록해 두면 Telegram이 매 요청에
+`X-Telegram-Bot-Api-Secret-Token` 헤더를 실어 보내고, Worker의 `isFromTelegram()`이
+이를 `TELEGRAM_WEBHOOK_SECRET`과 대조합니다.
+
+```
+Telegram  ──POST + X-Telegram-Bot-Api-Secret-Token: <secret>──▶  일치     → 정상 처리
+제3자     ──POST (헤더 없음 또는 불일치)                    ──▶  불일치   → 200 반환 후 무시
+```
+
+거절할 때 401이 아니라 **200을 돌려주고 조용히 버리는** 이유는, 응답 코드가 다르면
+상대가 검증의 존재 여부와 추측한 값의 정오를 알 수 있기 때문입니다.
+
+> `TELEGRAM_WEBHOOK_SECRET`이 설정되지 않은 환경에서는 검증을 건너뛰고 경고 로그만
+> 남깁니다. secret을 등록하기 전에 Worker가 배포되어 봇이 멈추는 상황을 막기
+> 위한 것입니다. 바꿔 말해 **secret을 넣지 않으면 보호되지 않으므로**, 배포 후
+> `wrangler secret put TELEGRAM_WEBHOOK_SECRET`과 `setWebhook` 재호출을 반드시
+> 함께 해야 합니다(→ [`SETUP.md` 5장](./SETUP.md)).
 
 `services/database.ts`는 Supabase 클라이언트를 `WeakMap<Env, SupabaseClient>`로 캐싱해
 같은 isolate 안에서 재사용합니다.
@@ -786,7 +798,7 @@ CREATE INDEX idx_sake_imports_embedding
 |---|---|---|
 | 트리거 | 사용자의 사진 전송 | 관리자의 엑셀 업로드 |
 | 진입점 | `POST /telegram-webhook` | `POST /admin/upload-chunk` |
-| 인증 | 없음 — 웹훅 검증 미구현 ([4절](#4-서비스-연결-방식)) | Bearer 비밀번호 |
+| 인증 | 웹훅 secret token ([4절](#4-서비스-연결-방식)) | Bearer 비밀번호 |
 | 비동기 | Cloudflare Queues (1건씩) | 브라우저 측 3병렬 청크 |
 | AI 사용 | Vision 추출 + 임베딩 + Vision 재검증 | 임베딩만 (신규 행 한정) |
 | DB 연산 | RPC `search_products` (읽기) | RPC `bulk_update_sake_imports` + `insert` (쓰기) |
