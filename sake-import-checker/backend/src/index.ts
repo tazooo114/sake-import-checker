@@ -5,6 +5,7 @@ import type { PhotoQueueMessage } from './types';
 import { handleTelegramWebhook, handleSetWebhook } from './handlers/telegram';
 import { handleInitUpload, handleUploadChunk, handleStats } from './handlers/admin';
 import { handleHealth } from './handlers/health';
+import { handleSearchEval } from './handlers/eval';
 import { handlePhotoQueue } from './handlers/queueConsumer';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -27,6 +28,7 @@ app.post('/admin/upload-init', handleInitUpload);
 app.post('/admin/upload-chunk', handleUploadChunk);
 app.get('/admin/stats', handleStats);
 app.post('/admin/set-webhook', handleSetWebhook);
+app.post('/admin/eval', handleSearchEval);
 
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 app.onError((err, c) => {

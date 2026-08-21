@@ -217,6 +217,87 @@ async function executeSearchPipeline(env: Env, base64Image: string): Promise<Sea
 }
 
 // ============================================
+// 검색 단계 평가 (관리자용)
+// ============================================
+
+export interface SearchEvaluation {
+  searchText: string;
+  /** 벡터 검색 1위 제품명 */
+  vectorTop: string | null;
+  /** 정답의 벡터 검색 순위 (1부터, 후보에 없으면 null) */
+  vectorRank: number | null;
+  /** 재정렬 후 1위 제품명 */
+  rerankedTop: string | null;
+  /** 정답의 재정렬 후 순위 */
+  rerankedRank: number | null;
+  topSimilarity: number | null;
+  /** 1위와 2위의 유사도 차 */
+  similarityGap: number | null;
+  /** 현재 임계값이라면 verifyMatch를 건너뛰는지 */
+  wouldSkipVerification: boolean;
+  candidateCount: number;
+}
+
+function findRank(candidates: Product[], expect: string): number | null {
+  const needle = expect.toLowerCase();
+  const index = candidates.findIndex(c =>
+    c.reported_product_name.toLowerCase().includes(needle)
+  );
+  return index === -1 ? null : index + 1;
+}
+
+/**
+ * 검색 단계만 실행해 진단 정보를 돌려준다. Vision 호출은 하지 않는다.
+ *
+ * 실제 파이프라인과 **같은 함수**(buildSearchText, vectorSearch,
+ * prioritizeByMetadata)를 쓴다. 평가용으로 로직을 복제하면 복제본만 통과하고
+ * 실제 경로는 깨지는 상황이 생기므로, 반드시 프로덕션 코드를 그대로 태운다.
+ */
+export async function evaluateSearch(
+  env: Env,
+  extracted: ExtractedLabelInfo,
+  expect: string
+): Promise<SearchEvaluation> {
+  const searchText = buildSearchText(extracted);
+  const embedding = await getEmbedding(env, searchText);
+  const candidates = await vectorSearch(env, embedding, 50, 0.5, extracted.productType);
+
+  if (candidates.length === 0) {
+    return {
+      searchText,
+      vectorTop: null,
+      vectorRank: null,
+      rerankedTop: null,
+      rerankedRank: null,
+      topSimilarity: null,
+      similarityGap: null,
+      wouldSkipVerification: false,
+      candidateCount: 0,
+    };
+  }
+
+  const reordered = prioritizeByMetadata(candidates, extracted);
+  const topSimilarity = reordered[0].similarity ?? 0;
+  const secondSimilarity = reordered.length > 1 ? (reordered[1].similarity ?? 0) : 0;
+  const similarityGap = topSimilarity - secondSimilarity;
+
+  return {
+    searchText,
+    vectorTop: candidates[0].reported_product_name,
+    vectorRank: findRank(candidates, expect),
+    rerankedTop: reordered[0].reported_product_name,
+    rerankedRank: findRank(reordered, expect),
+    topSimilarity,
+    similarityGap,
+    // 파이프라인(executeSearchPipeline)의 스킵 조건과 동일하게 유지할 것.
+    wouldSkipVerification:
+      topSimilarity >= HIGH_CONFIDENCE_SKIP_THRESHOLD ||
+      (topSimilarity >= 0.75 && similarityGap > 0.15),
+    candidateCount: candidates.length,
+  };
+}
+
+// ============================================
 // Search Text Builder (Type-Aware)
 // ============================================
 /**
