@@ -1,12 +1,23 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types';
-import type { QueueMessage } from './types';
+import type { QueueMessage, EmbedQueueMessage } from './types';
 import { handleTelegramWebhook, handleSetWebhook } from './handlers/telegram';
-import { handleInitUpload, handleUploadChunk, handleStats } from './handlers/admin';
+import {
+  handleInitUpload,
+  handleUploadChunk,
+  handleStats,
+  handleColoProbe,
+  handleEmbeddingStatus,
+  handleEmbedSelfTest,
+} from './handlers/admin';
 import { handleHealth } from './handlers/health';
 import { handleSearchEval } from './handlers/eval';
 import { handlePhotoQueue } from './handlers/queueConsumer';
+import { handleEmbedQueue } from './handlers/embedQueue';
+
+/** wrangler.toml의 [[queues.consumers]] queue 값과 반드시 일치해야 한다. */
+const EMBED_QUEUE_NAME = 'embedding-queue';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -27,6 +38,9 @@ app.post('/telegram-webhook', handleTelegramWebhook);
 app.post('/admin/upload-init', handleInitUpload);
 app.post('/admin/upload-chunk', handleUploadChunk);
 app.get('/admin/stats', handleStats);
+app.get('/admin/colo-probe', handleColoProbe);
+app.get('/admin/embedding-status', handleEmbeddingStatus);
+app.post('/admin/embed-selftest', handleEmbedSelfTest);
 app.post('/admin/set-webhook', handleSetWebhook);
 app.post('/admin/eval', handleSearchEval);
 
@@ -57,8 +71,14 @@ export default {
     }
   },
 
-  // Queue Consumer Handler (사진 순차 처리)
-  async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
-    await handlePhotoQueue(batch, env);
+  // Queue Consumer Handler
+  // 큐가 둘이므로 batch.queue로 분기한다.
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    if (batch.queue === EMBED_QUEUE_NAME) {
+      await handleEmbedQueue(batch as MessageBatch<EmbedQueueMessage>, env);
+      return;
+    }
+
+    await handlePhotoQueue(batch as MessageBatch<QueueMessage>, env);
   },
 };
