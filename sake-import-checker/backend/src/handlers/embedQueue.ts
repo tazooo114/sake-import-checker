@@ -35,8 +35,12 @@ export async function handleEmbedQueue(
       continue;
     }
 
+    // 음수 id는 /admin/embed-selftest의 표식이다. BIGSERIAL은 1부터 시작하므로
+    // 실제 데이터와 겹치지 않는다.
+    const isSelfTest = items.every(item => item.id < 0);
+
     try {
-      console.log(`[EMBED] Generating ${items.length} embeddings`);
+      console.log(`[EMBED] Generating ${items.length} embeddings${isSelfTest ? ' (self-test)' : ''}`);
 
       const embeddings = await getBatchEmbeddings(env, items.map(i => i.text));
 
@@ -65,13 +69,18 @@ export async function handleEmbedQueue(
         }
       }
 
-      if (matched !== items.length) {
-        // 데이터가 유실된 건 아니다 — 해당 행은 name_embedding이 NULL로 남고
-        // /admin/embedding-status에 잡힌다. 다만 id 매칭이 틀렸다는 신호다.
-        console.warn(`[EMBED] 갱신된 행 수 불일치: ${matched}/${items.length} — id 매칭 확인 필요`);
+      if (isSelfTest) {
+        // /admin/embed-selftest는 존재하지 않는 id를 쓰므로 0건 갱신이 정상이다.
+        // 여기서 경고를 내면 점검할 때마다 없는 문제를 조사하게 된다.
+        console.log(`[EMBED] self-test OK — 큐 분기·Gemini·Supabase 경로 정상, DB 변경 없음`);
+      } else {
+        if (matched !== items.length) {
+          // 데이터가 유실된 건 아니다 — 해당 행은 name_embedding이 NULL로 남고
+          // /admin/embedding-status에 잡힌다. 다만 id 매칭이 틀렸다는 신호다.
+          console.warn(`[EMBED] 갱신된 행 수 불일치: ${matched}/${items.length} — id 매칭 확인 필요`);
+        }
+        console.log(`[EMBED] Filled ${matched}/${items.length} embeddings`);
       }
-
-      console.log(`[EMBED] Filled ${matched}/${items.length} embeddings`);
       message.ack();
     } catch (error) {
       console.error(`[EMBED] Failed for ${items.length} rows (attempt ${message.attempts}):`, error);
