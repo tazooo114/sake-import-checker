@@ -46,11 +46,13 @@ rawText: isRateLimitError ? '' : rawText,   // rawText === "Error: Timeout after
 
 - 고침: 해당 값을 빼거나 `(수입량 12,000kg)`으로 라벨을 명시.
 
-### 1.3 [확인] 배치 임베딩 실패가 빈 배열로 흘러감
+### 1.3 [확인 · 부분 변경 2026-08-23] 배치 임베딩 실패가 빈 배열로 흘러감
 
-`gemini.ts:315-317`이 `result.embeddings` 부재 시 `texts.map(() => [])`를 반환합니다. 이 빈 배열이 `admin.ts:255`의 `name_embedding`으로 들어가면 `halfvec(768)` 타입 오류로 청크가 실패합니다. 그 시점엔 같은 청크의 bulk UPDATE는 이미 커밋된 뒤라 재시도 시 중복 작업이 됩니다(멱등이라 데이터가 깨지진 않음).
+`gemini.ts:315-317`이 `result.embeddings` 부재 시 `texts.map(() => [])`를 반환합니다. 이 빈 배열이 `name_embedding`으로 들어가면 `halfvec(768)` 타입 오류가 납니다.
 
-- 고침: 빈 배열 대신 `throw`. 그러면 `retryWithBackoff`(`admin.ts:239`)가 정상 동작합니다.
+- 고침: 빈 배열 대신 `throw`. **아직 미적용입니다.**
+- 2026-08-23 변경으로 **영향 범위와 심각도가 줄었습니다.** 임베딩이 업로드 요청에서 큐 컨슈머로 옮겨졌기 때문입니다(9.2 참조). 이제 실패해도 ① bulk UPDATE는 이미 다른 단계에서 끝나 있어 얽히지 않고 ② 컨슈머가 무조건 재시도하며 ③ 최종 실패해도 그 행은 `name_embedding`이 NULL로 남아 `/admin/embedding-status`에 드러납니다.
+- 원문에 있던 "`retryWithBackoff`(`admin.ts:239`)가 정상 동작합니다"는 **더 이상 유효하지 않습니다.** 그 함수는 제거됐습니다 — 같은 colo에 갇혀 재시도가 무의미하다는 것이 실측으로 확인됐기 때문입니다(9.2).
 
 ### 1.4 [확인 · ✅ 해결 2026-08-21] 숫자 매칭 오탐
 

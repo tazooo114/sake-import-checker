@@ -89,14 +89,59 @@ sake-import-checker/
 └── docs/             # 문서
 ```
 
+## 구성도
+
+```
+   [ 쓰기 경로 ]                       [ 읽기 경로 ]
+
+   관리자 브라우저                      텔레그램 사용자
+        │ .xlsx 파싱 후 50행 청크            │ 라벨 사진
+        ▼                                   ▼
+   Worker  /admin/upload-chunk         Worker  /telegram-webhook
+   · 복합키로 UPDATE/INSERT 분리        · 즉시 200, 백그라운드 enqueue
+   · 신규는 임베딩 없이 INSERT               │
+        │                                   ▼
+        │ {id, 임베딩텍스트}            photo-search-queue
+        ▼                                   │
+   embedding-queue                          ▼
+        │                              Queue Consumer
+        ▼                              · Gemini Vision (라벨 추출)
+   Queue Consumer                      · 벡터 검색 + 재정렬
+   · Gemini Embedding                  · Gemini Vision (재검증)
+   · UPDATE name_embedding                  │
+        │                                   │
+        └──────▶ Supabase ◀─────────────────┘
+                 PostgreSQL + pgvector
+```
+
+**Gemini 호출은 양쪽 모두 큐 컨슈머에서만 일어납니다.** HTTP 요청이 도달하는 엣지 위치에서는 Gemini가 지역 제한으로 거절하기 때문입니다 ([ARCHITECTURE 3.7](docs/ARCHITECTURE.md#37-gemini-호출이-전부-큐-컨슈머에-있는-이유)).
+
 ## 문서
 
 - [왕초보 설치 가이드](docs/BEGINNER_GUIDE.md) - **추천!**
 - [아키텍처](docs/ARCHITECTURE.md) - 조회/적재 두 흐름과 단계별 데이터 변환
 - [기술 설치 가이드](docs/SETUP.md)
+- [개선 이력·우선순위](docs/feedback.md) - 코드 리뷰 결과와 진행 상태
 - [프로젝트 헌법](constitution.md)
 - [기능 명세서](spec.md)
 - [구현 계획](plan.md)
+
+### 문서 지도 — 무엇을 바꾸면 무엇을 갱신하는가
+
+이 저장소의 고질적 문제가 **코드·문서·실제 배포가 서로 어긋나는 것**입니다. 코드를 고쳤으면 아래 표에서 해당 행을 찾아 문서도 같이 갱신하세요.
+
+| 바꾼 것 | 같이 갱신할 문서 |
+|---|---|
+| 검색·재정렬 로직 (`services/search.ts`) | ARCHITECTURE 2.3 · feedback.md |
+| Gemini 모델·프롬프트·토큰 (`services/gemini.ts`) | ARCHITECTURE 2장 · feedback.md 2장 |
+| 업로드·적재 (`handlers/admin.ts`, `admin/js/upload.js`) | ARCHITECTURE 3장 (구성도 포함) |
+| 큐 구성 (`wrangler.toml`, `handlers/*Queue*.ts`) | ARCHITECTURE 1·3.7 · SETUP 큐 생성 절 · 이 README 구성도 |
+| DB 스키마·RPC (`database/*.sql`) | ARCHITECTURE 5장 · SETUP 1절 · spec.md 4장 |
+| 엔드포인트 추가·삭제 (`index.ts`) | SETUP 운영 엔드포인트 절 · ARCHITECTURE 4장 |
+| 배포·시크릿·Node 버전 절차 | SETUP · 저장소 루트 `CLAUDE.md` |
+| 개선 항목의 진행 상태 | feedback.md 8장 우선순위표 |
+
+**PDF는 자동 생성물이 아니라 수동 산출물입니다.** `docs/*.pdf`는 대응하는 `.md`를 고쳐도 갱신되지 않으므로, 배포용으로 쓸 때 다시 만들어야 합니다.
 
 ## 라이선스
 

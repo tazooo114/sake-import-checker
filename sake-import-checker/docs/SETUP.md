@@ -334,12 +334,48 @@ wrangler secret put TELEGRAM_WEBHOOK_SECRET
 > `TELEGRAM_WEBHOOK_SECRET`은 **5장에서 `setWebhook`에 넘길 값과 반드시 같아야**
 > 합니다. 값을 지금 만들어 어딘가에 적어두세요.
 
-### 4.3 배포
+### 4.3 큐 생성 (배포 전에 필요)
+
+`wrangler.toml`이 큐 4개를 참조합니다. **큐가 없으면 `wrangler deploy`가 실패합니다.**
+
+| 큐 | 역할 |
+|---|---|
+| `photo-search-queue` | 사진 검색 요청을 1건씩 순차 처리 |
+| `photo-search-dlq` | 사진 검색 최종 실패분 |
+| `embedding-queue` | 엑셀 업로드의 임베딩 생성 |
+| `embedding-dlq` | 임베딩 최종 실패분 |
+
+```bash
+wrangler queues create photo-search-queue
+wrangler queues create photo-search-dlq
+wrangler queues create embedding-queue
+wrangler queues create embedding-dlq
+```
+
+> **함정 — 설치된 wrangler로는 큐 생성이 안 됩니다.**
+> 이 프로젝트에 고정된 wrangler 4.54는 `queues create`가 `The specified queue settings are invalid.`(API 400)로 실패합니다. `wrangler.toml` 문제가 아니라 그 버전 자체의 문제이며, 다른 디렉터리에서 실행해도 같습니다. `queues list`나 `deploy` 같은 다른 큐 명령은 정상 동작합니다.
+>
+> 큐를 만들 때만 최신 wrangler를 일회성으로 씁니다. 최신 wrangler는 Node 22+를 요구하므로 v24가 필요합니다:
+>
+> ```bash
+> export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:$PATH"
+> npx -y wrangler@latest queues create embedding-queue
+> ```
+>
+> 배포·로그 등 나머지 작업은 계속 Node 20 + 설치된 wrangler로 합니다.
+>
+> 에러 상세를 보려면 `WRANGLER_LOG_SANITIZE=false`가 필요한데, 그러면 **인증 토큰이 로그 파일에 평문으로 남으므로 쓰지 마세요.**
+
+**왜 큐가 두 쌍인가**: 업로드 한 번이 메시지 수십~수백 건을 밀어넣습니다. 사진 큐(`max_batch_size = 1`)를 공유하면 그 뒤에 들어온 사용자 사진이 전부 소진될 때까지 대기하게 됩니다. 그리고 Gemini 호출을 큐 컨슈머에 두는 이유는 지역 제한입니다 — [ARCHITECTURE 3.7절](./ARCHITECTURE.md#37-gemini-호출이-전부-큐-컨슈머에-있는-이유) 참고.
+
+### 4.4 배포
 ```bash
 wrangler deploy
 ```
 
 배포 후 URL 확인 (예: `https://sake-import-checker.your-subdomain.workers.dev`)
+
+출력의 바인딩 목록에 `env.PHOTO_QUEUE`와 `env.EMBED_QUEUE`가, 트리거 목록에 두 큐의 Producer/Consumer가 모두 보여야 정상입니다.
 
 ---
 
@@ -475,6 +511,68 @@ curl https://sake-import-checker.your-subdomain.workers.dev/health
    - ✅ 카테고리 자동 분류 (Category + HS-CODE 기반)
    - ✅ 모든 제품이 검색 대상에 포함됨
    - ✅ 임베딩 텍스트에 Origin Country 포함
+   - ✅ **업로드 직후에는 아직 검색되지 않습니다.** 임베딩은 큐가 비동기로 채웁니다 (아래 7.5 참고)
+
+### 7.5 임베딩 적재 확인
+
+업로드 응답의 200은 "저장됐다"이지 "검색 가능해졌다"가 아닙니다. `name_embedding`이 채워져야 검색에 잡힙니다.
+
+```bash
+curl -H "Authorization: Bearer <ADMIN_PASSWORD>" \
+  https://<worker>.workers.dev/admin/embedding-status
+```
+
+- 업로드 직후: `pending`이 0보다 큽니다 (정상)
+- 큐 소진 후: `pending`이 **0으로 수렴**해야 합니다
+- 계속 0이 아니면: `embedding-dlq`를 확인하세요. 그 행들은 검색에 영원히 잡히지 않습니다
+
+`wrangler tail`에서 볼 로그:
+
+```
+[COLO] queue/embed — colo=SJC loc=US      ← Gemini 허용 지역이어야 함
+[EMBED] Generating 50 embeddings
+[EMBED] Filled 50/50 embeddings           ← 두 수가 같아야 정상
+```
+
+`Filled 0/50`처럼 어긋나면 id 매칭이 틀린 것입니다. 데이터가 유실된 건 아니고 해당 행의 임베딩만 비어 있는 상태입니다.
+
+---
+
+## 운영·진단 엔드포인트
+
+모두 `Authorization: Bearer <ADMIN_PASSWORD>`가 필요합니다.
+
+| 엔드포인트 | 용도 |
+|---|---|
+| `GET /health` | 생존 확인. 실행 colo도 함께 반환 (인증 불필요) |
+| `GET /admin/stats` | 총 건수·최종 갱신일·상위 수출사 |
+| `GET /admin/embedding-status` | 임베딩이 채워지지 않은 행 수와 샘플 |
+| `POST /admin/embed-selftest` | **DB를 바꾸지 않고** 임베딩 큐 경로 전체를 점검 |
+| `GET /admin/colo-probe?n=20` | 실행 colo와 Gemini 통과 여부를 함께 측정 |
+| `POST /admin/set-webhook` | 웹훅 URL·secret 등록 (5.2절) |
+| `POST /admin/eval` | 검색 평가 하네스 실행 |
+
+### 업로드가 지역 제한으로 막힐 때
+
+`User location is not supported for the API use`가 보이면 실행 PoP이 Gemini 비허용 지역입니다. 진단:
+
+```bash
+curl -H "Authorization: Bearer <ADMIN_PASSWORD>" \
+  "https://<worker>.workers.dev/admin/colo-probe?n=20"
+```
+
+`colo`가 `HKG`(홍콩)면 100% 막힙니다. 다만 **업로드 자체는 이 영향을 받지 않습니다** — 임베딩은 큐 컨슈머에서 만들기 때문입니다. 큐 컨슈머 쪽 colo는 `POST /admin/embed-selftest` 후 `wrangler tail`의 `[COLO] queue/embed`로 확인합니다.
+
+배경과 실측값은 [ARCHITECTURE 3.7절](./ARCHITECTURE.md#37-gemini-호출이-전부-큐-컨슈머에-있는-이유) 참고.
+
+### 시크릿을 셸에 직접 타이핑하지 마세요
+
+위 예시의 `<ADMIN_PASSWORD>`를 그대로 명령줄에 치면 셸 히스토리에 남습니다. 히스토리에 남기지 않는 형태:
+
+```bash
+read -rs "?admin password: " PW && curl -s -H "Authorization: Bearer $PW" \
+  https://<worker>.workers.dev/admin/embedding-status; unset PW
+```
 
 ---
 

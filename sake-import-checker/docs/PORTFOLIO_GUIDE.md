@@ -454,8 +454,10 @@ $$ LANGUAGE plpgsql;
 
 ```
 기존 제품: 수치만 업데이트 (임베딩 유지)
-신규 제품: 임베딩 생성 후 추가
+신규 제품: 임베딩 없이 INSERT → 큐가 비동기로 임베딩을 채움
 ```
+
+> **2026-08-23 변경**: 임베딩 생성이 업로드 요청 안에서 큐 컨슈머로 옮겨졌습니다. Gemini가 호출 지역을 "호출한 기계의 IP"로 판정하는데, 관리자 HTTP 요청이 도달하는 엣지 위치가 비허용 지역(홍콩)이면 100% 거절되기 때문입니다. 아래 코드 예시는 변경 이전 형태입니다 — 현재 구조는 [ARCHITECTURE 3.7절](./ARCHITECTURE.md#37-gemini-호출이-전부-큐-컨슈머에-있는-이유)을 보세요.
 
 **4-필드 복합 키로 기존/신규 판단**:
 ```
@@ -884,6 +886,8 @@ export async function handleUploadChunk(c: Context<{ Bindings: Env }>) {
   }
 
   // 5. 신규 제품: 임베딩 생성 후 INSERT
+  //    ※ 현재 구조 아님. 지역 제한 때문에 임베딩은 큐 컨슈머로 옮겼다.
+  //      지금은 임베딩 없이 INSERT하고 {id, text}를 EMBED_QUEUE로 보낸다.
   if (toInsert.length > 0) {
     const texts = toInsert.map(item => item.embeddingText);
     const embeddings = await getBatchEmbeddings(c.env, texts);

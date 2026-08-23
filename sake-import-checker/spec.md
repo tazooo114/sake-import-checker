@@ -72,6 +72,7 @@
 | Smart Update (기본) | 기존 제품은 정보(가격 등)만 업데이트, 신규 제품만 임베딩 생성 (비용/시간 절약) |
 | Full Reset | 기존 데이터를 모두 삭제하고 전체 재분석 |
 | Excel 청크 업로드 | 50개 단위 순차 업로드로 Cloudflare Worker 30초 제한 회피 |
+| 임베딩 적재 | 업로드 응답과 **분리된 비동기 작업**. 신규 행은 임베딩 없이 저장되고 큐 컨슈머가 채운다. 채워지기 전까지 해당 행은 검색에 잡히지 않으며, 진행 상황은 `GET /admin/embedding-status`로 본다 ([ARCHITECTURE 3.7](docs/ARCHITECTURE.md#37-gemini-호출이-전부-큐-컨슈머에-있는-이유)) |
 
 ---
 

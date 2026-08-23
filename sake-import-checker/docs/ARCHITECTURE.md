@@ -23,7 +23,7 @@
 |---|---|---|---|
 | 관리자 웹 | 정적 HTML + Vanilla JS | Cloudflare **Pages** (`*.pages.dev`) | `admin/` |
 | 백엔드 | Hono on Cloudflare **Workers** | `*.workers.dev` | `backend/src/` |
-| 비동기 큐 | Cloudflare **Queues** | Worker 바인딩 | `wrangler.toml` |
+| 비동기 큐 | Cloudflare **Queues** 2개<br>`photo-search-queue` (읽기) · `embedding-queue` (쓰기) | Worker 바인딩 | `wrangler.toml` |
 | 데이터베이스 | **Supabase** PostgreSQL + pgvector | 관리형 | `database/*.sql` |
 | AI | **Google Gemini** (Vision + Embedding) | 외부 API | `services/gemini.ts` |
 | 사용자 접점 | **Telegram Bot API** | 외부 API | `services/telegram.ts` |
@@ -50,15 +50,23 @@
         ▼                                  · 백그라운드로 enqueue
    Worker — handlers/admin.ts                   │
    · 카테고리 분류 / 복합키 판별                  ▼
-   · 기존은 UPDATE, 신규만 임베딩            Cloudflare Queue
-        │                                  · 1건씩 순차 처리
-        ├──────────────┐                        │ dequeue
-        ▼              │                        ▼
-   Gemini Embedding    │                   Worker — Queue Consumer
-   (신규 행만)          │                   · services/search.ts
-        │              │                        │
-        └──────────────┤                        ├──▶ Gemini Vision
-                       ▼                        │    (라벨 추출 / 재검증)
+   · 기존은 UPDATE                          photo-search-queue
+   · 신규는 임베딩 없이 INSERT               · 1건씩 순차 처리
+        │                                       │ dequeue
+        ├───────────────┐                       ▼
+        │               │                  Worker — Queue Consumer
+        │  {id, 임베딩텍스트}                · services/search.ts
+        ▼               │                       │
+   embedding-queue      │                       ├──▶ Gemini Vision
+        │ dequeue       │                       │    (라벨 추출 / 재검증)
+        ▼               │                       │
+   Worker — Queue Consumer                      │
+   · handlers/embedQueue.ts                     │
+        │               │                       │
+        ├──▶ Gemini Embedding                   │
+        │                                       │
+        │ UPDATE name_embedding                 │
+        ▼               ▼                       │
                   Supabase                      │
                   PostgreSQL + pgvector  ◀──────┤ 벡터 검색
                        ▲                        │
@@ -67,12 +75,9 @@
                                              (결과 회신)
 ```
 
-두 경로가 만나는 지점은 **Supabase의 `name_embedding` 벡터 컬럼 하나**입니다.
-쓰기 경로가 텍스트를 768차원 벡터로 바꿔 넣고, 읽기 경로가 이미지를 같은 768차원
-벡터 공간으로 투영해 검색합니다. **양쪽 모두 같은 임베딩 모델을 써야만** 검색이
-성립합니다 (`gemini-embedding-001`, `outputDimensionality: 768`).
-다만 벡터로 만드는 **텍스트의 재료는 양쪽이 다릅니다** — 상세 비교는
-[3.6절](#36-적재-텍스트-vs-조회-텍스트--의도된-비대칭) 참고.
+두 경로가 만나는 지점은 **Supabase의 `name_embedding` 벡터 컬럼 하나**입니다. 쓰기 경로가 텍스트를 768차원 벡터로 바꿔 넣고, 읽기 경로가 이미지를 같은 768차원 벡터 공간으로 투영해 검색합니다. **양쪽 모두 같은 임베딩 모델을 써야만** 검색이 성립합니다 (`gemini-embedding-001`, `outputDimensionality: 768`). 다만 벡터로 만드는 **텍스트의 재료는 양쪽이 다릅니다** — 상세 비교는 [3.6절](#36-적재-텍스트-vs-조회-텍스트--의도된-비대칭) 참고.
+
+**Gemini 호출은 양쪽 경로 모두 큐 컨슈머에서만 일어납니다.** 관리자 HTTP 요청이 도달하는 엣지 위치에서는 Gemini가 지역 제한으로 거절하기 때문입니다. 이유와 실측값은 [3.7절](#37-gemini-호출이-전부-큐-컨슈머에-있는-이유) 참고.
 
 ---
 
@@ -209,10 +214,21 @@ Gemini는 **두 값을 함께** 돌려줍니다 — 몇 번 후보가 맞는지(
       · 표시명과 임베딩 텍스트를 만들고, 카테고리를 분류한다
       · 4필드 복합키로 기존 행인지 신규 행인지 판별한다
       · 기존 행 → RPC bulk_update_sake_imports (임베딩을 만들지 않는다)
-      · 신규 행 → Gemini batchEmbedContents로 벡터를 만든 뒤 insert
+      · 신규 행 → 임베딩 없이 INSERT하고, .select('id')로 id를 회수한 뒤
+                 {id, 임베딩텍스트}를 embedding-queue로 보낸다
+      · 이 시점에 Gemini는 호출하지 않는다 (3.7절)
 6. 브라우저가 진행률을 갱신한다
       실패한 청크는 백오프 재시도하고, 중단되면 그 지점부터 다시 이어간다
+7. embedding-queue 컨슈머(handlers/embedQueue.ts)가 비동기로 마무리한다
+      · Gemini batchEmbedContents로 벡터를 만든다
+      · id로 UPDATE해서 name_embedding을 채운다
+      · 채워지기 전까지 그 행은 검색에 잡히지 않는다 (틀린 결과가 아니라 미노출)
 ```
+
+> **업로드 응답 200은 "저장됐다"이지 "검색 가능해졌다"가 아닙니다.**
+> 임베딩이 채워져야 검색에 잡힙니다. 진행 상황은 `GET /admin/embedding-status`의
+> `pending`으로 확인합니다 — 업로드 직후에는 0이 아니고, 큐가 소진되면 0으로
+> 수렴해야 정상입니다. 계속 0이 아니면 `embedding-dlq`를 확인해야 합니다.
 
 ### 3.2 데이터 변환 표
 
@@ -226,16 +242,19 @@ Gemini는 **두 값을 함께** 돌려줍니다 — 몇 번 후보가 맞는지(
 | 6 | `displayName` 목록 | Supabase `SELECT ... IN` | 기존 행의 4필드 조합 Map |
 | 7 | 행 | 복합키 대조 | `toUpdate[]` / `toInsert[]` 분리 |
 | 8 | `toUpdate[]` | RPC `bulk_update_sake_imports(JSONB)` | 갱신 행 수 (네트워크 왕복 **1회**) |
-| 9 | `toInsert[]`의 `embeddingText[]` | **Gemini** `batchEmbedContents` | `number[768][]` |
-| 10 | 행 + 벡터 | `supabase.from().insert()` | `sake_imports` 신규 행 |
+| 9 | `toInsert[]` | `supabase.from().insert().select('id')` | `sake_imports` 신규 행 (`name_embedding` = NULL) + 회수한 `id[]` |
+| 10 | `id[]` + `embeddingText[]` | `EMBED_QUEUE.send()` | 큐 메시지 `{kind:'embed', items:[{id, text}]}` — 50건에 약 5 KB |
+| 11 | 큐 메시지 | **Gemini** `batchEmbedContents` (컨슈머) | `number[768][]` |
+| 12 | `id` + 벡터 | `update().eq('id').select('id')` | `name_embedding` 채움 · 실제 갱신된 행 수 확인 |
 
-> **헷갈리기 쉬운 지점 — 임베딩은 브라우저가 아니라 Worker가 만듭니다.**
-> 브라우저가 하는 일은 xlsx를 JSON으로 바꿔 보내는 것까지입니다(1~2단계).
-> 벡터 생성(9단계)은 Gemini API 키가 필요한데, 그 키는 Worker secret이라
-> 브라우저에 내려주지 않습니다. 또한 벡터를 만드는 대상은 **행 전체가 아니라
-> `embeddingText` 한 줄**(제품명 KR + EN + 수출사 + 원산지)이며,
-> 금액·물량 같은 숫자 컬럼은 벡터에 들어가지 않고 일반 컬럼으로만 저장됩니다.
-> 검색 대상이 아니라 검색 **결과로 보여줄 값**이기 때문입니다.
+> **헷갈리기 쉬운 지점 ① — 임베딩은 브라우저가 아니라 Worker가, 그중에서도 큐 컨슈머가 만듭니다.**
+> 브라우저가 하는 일은 xlsx를 JSON으로 바꿔 보내는 것까지입니다(1~2단계). 벡터 생성(11단계)은 Gemini API 키가 필요한데 그 키는 Worker secret이라 브라우저에 내려주지 않습니다. 그리고 HTTP 핸들러가 아니라 큐 컨슈머에서 만드는 이유는 지역 제한입니다([3.7절](#37-gemini-호출이-전부-큐-컨슈머에-있는-이유)).
+> 또한 벡터를 만드는 대상은 **행 전체가 아니라 `embeddingText` 한 줄**(제품명 KR + EN + 수출사 + 원산지)이며, 금액·물량 같은 숫자 컬럼은 벡터에 들어가지 않고 일반 컬럼으로만 저장됩니다. 검색 대상이 아니라 검색 **결과로 보여줄 값**이기 때문입니다.
+
+> **헷갈리기 쉬운 지점 ② — 임베딩 원문은 DB에 저장되지 않습니다.**
+> DB에 남는 건 `displayName`(`"닷사이 23 (Dassai 23)"`, 괄호 포함)뿐이고, 임베딩 원문 `embeddingText`(`"닷사이 23 Dassai 23 Asahi Shuzo Japan"`, 괄호 없음)는 쓰이고 버려집니다.
+> 그래서 큐 메시지에 **id만이 아니라 텍스트까지** 실어 보냅니다(10단계). 컨슈머가 DB에서 재조립하면 괄호 때문에 문자열이 달라지고, 기존 행과 신규 행의 임베딩 레시피가 갈려 유사도 기준이 어긋납니다.
+> 뒤집어 말하면 **DLQ까지 빠진 행은 자동 복구가 불가능합니다.** 원문이 어디에도 없기 때문입니다. 진짜 자가 복구를 하려면 `embedding_text` 컬럼을 추가해야 하며, 현재는 `GET /admin/embedding-status`로 드러내기만 합니다.
 
 ### 3.3 카테고리 분류 규칙
 
@@ -300,21 +319,20 @@ SDK는 이를 **PostgREST HTTP 호출**로 변환합니다. 실제 SQL은 `datab
 비용이 신규 행 수에만 비례합니다.
 
 **④ 실패해도 이어서 한다**
-재시도는 **브라우저와 Worker 두 층에 각각** 있고, 설정이 서로 다릅니다.
+재시도는 **브라우저와 큐 두 층에** 있고, 성격이 서로 다릅니다.
 
-| | 브라우저 — 청크 전송 재시도<br>(`admin/js/upload.js` `fetchWithRetry`) | Worker — 임베딩 호출 재시도<br>(`handlers/admin.ts` `retryWithBackoff`) |
+| | 브라우저 — 청크 전송 재시도<br>(`admin/js/upload.js` `fetchWithRetry`) | 큐 — 임베딩 생성 재시도<br>(`embedding-queue` `max_retries`) |
 |---|---|---|
-| 최대 횟수 | 5회 | 3회 |
-| 대기 간격 | 2s → 4s → 8s → 16s | 2s → 4s (+ 0~500ms jitter) |
-| 재시도 안 하는 경우 | 4xx 응답 (그대로 반환) | `unauthorized`/`invalid`/`forbidden` 포함 오류 |
+| 최대 횟수 | 5회 | 5회 |
+| 대기 간격 | 2s → 4s → 8s → 16s | Cloudflare Queues 백오프 |
+| 재시도 안 하는 경우 | 4xx 응답 (그대로 반환) | 없음 — 무조건 재시도 |
+| 소진 후 | 사용자에게 오류 표시 | `embedding-dlq`로 이동 |
 
-즉 **일시 장애(5xx·네트워크)는 두 층에서 모두 버티고, 인증·검증 오류는 어느 층에서도
-재시도하지 않습니다.** 비밀번호가 틀렸는데 16초씩 기다리며 5번 두드리는 낭비를
-막기 위해서입니다.
+큐 쪽이 오류를 분류하지 않는 것은 그 작업이 **멱등**하기 때문입니다. 행은 이미 DB에 안전하게 들어가 있고 `id`로 UPDATE하므로, 몇 번을 다시 돌려도 결과가 같습니다. 판정할 이유가 없으니 그냥 다시 시도합니다.
 
-여기에 더해 브라우저가 `lastProcessedIndex`를 들고 있어 중단 지점부터 재개할 수
-있습니다. Gemini 일일 할당량에 걸려 업로드가 멈춰도 이미 처리한 분량은 날아가지
-않습니다.
+**요청 안에서의 재시도는 의도적으로 두지 않았습니다.** 예전에는 `handlers/admin.ts`에 `retryWithBackoff`(3회)가 있었지만, 지역 제한으로 막힌 경우 같은 엣지 위치에 갇혀 3번 모두 같은 이유로 실패합니다(실측 20/20 실패). 재시도가 의미를 가지려면 **실행 위치가 바뀌어야** 하고, 그건 큐 재시도만 할 수 있는 일입니다 — 재시도가 곧 새 컨슈머 실행이기 때문입니다. 자세한 근거는 [3.7절](#37-gemini-호출이-전부-큐-컨슈머에-있는-이유).
+
+여기에 더해 브라우저가 `lastProcessedIndex`를 들고 있어 중단 지점부터 재개할 수 있습니다. 업로드가 멈춰도 이미 처리한 분량은 날아가지 않습니다.
 
 ### 3.6 적재 텍스트 vs 조회 텍스트 — 의도된 비대칭
 
@@ -366,6 +384,40 @@ Gemini 추출  {winery:"Chateau Margaux", region:"Bordeaux", vintage:"2018"}
 > 쓴 것이 바로 이 재생성을 피하기 위한 선택이었습니다
 > (경위는 [5.6절 끝의 각주](#56-sql-적용-순서) 참고).
 
+### 3.7 Gemini 호출이 전부 큐 컨슈머에 있는 이유
+
+**Gemini는 호출 지역을 사람의 위치가 아니라 "API를 호출한 기계의 IP"로 판정합니다.** 구글 문서의 표현으로는 "Region restrictions are applied based on the region that the Colab instance is in, not the region that the user is in"입니다. Cloudflare Workers에서 그 기계는 Worker를 실행 중인 엣지 PoP입니다.
+
+문제는 **HTTP 핸들러가 클라이언트가 붙는 PoP에서 실행된다**는 점입니다. 관리자가 어디서 접속하느냐에 따라 실행 위치가 정해지고, 그게 Gemini 비허용 지역이면 호출이 거절됩니다.
+
+`GET /admin/colo-probe?n=20`으로 측정한 값(2026-08-23):
+
+| 경로 | colo | Gemini |
+|---|---|---|
+| 관리자 HTTP (VPN 켬) | ICN 서울 | 통과 |
+| 관리자 HTTP (VPN 끔) | **HKG 홍콩** | **0/20 실패** |
+| 큐 컨슈머 | SJC 산호세 · SEA 시애틀 | 통과 |
+
+한국·일본·싱가포르는 Gemini 허용 지역이지만 **홍콩은 아닙니다.** 홍콩 PoP에 걸리면 `User location is not supported for the API use`(400 FAILED_PRECONDITION)로 100% 거절됩니다 — 확률적이 아니라 결정적입니다. 개발 환경(한국 ISP)에서 VPN 없는 관리자 요청이 홍콩에 붙었고, 이것이 **업로드마다 VPN이 필요했던 원인**입니다. VPN은 사람의 위치가 아니라 붙는 PoP을 바꿔서 통했던 것입니다.
+
+여기서 나오는 결론 두 가지가 이 구조를 결정했습니다.
+
+**① 요청 안에서 재시도해도 소용이 없습니다.** 같은 실행 컨텍스트는 같은 PoP에 갇혀 있습니다. 브라우저가 다시 보내도 같은 클라이언트는 같은 PoP에 안정적으로 붙으므로 마찬가지입니다.
+
+**② 큐 컨슈머는 붙을 클라이언트가 없어 무관한 위치에서 실행됩니다.** 측정값이 미국이었고, 사진 검색과 평가가 지금껏 지역 오류를 낸 적이 없습니다. 게다가 큐 재시도는 **새 실행**이라 다른 PoP을 잡을 기회가 됩니다.
+
+그래서 읽기 경로든 쓰기 경로든 **Gemini 호출은 전부 큐 컨슈머 안에** 있습니다. 참고로 `wrangler.toml`의 Smart Placement는 백엔드 근접 배치 휴리스틱이지 국가 지정 기능이 아니라서 해법이 되지 못합니다(실측에서도 `ingress == colo`로 재배치가 일어나지 않았습니다).
+
+진단·점검 엔드포인트(모두 `Authorization: Bearer <ADMIN_PASSWORD>` 필요):
+
+| 엔드포인트 | 용도 |
+|---|---|
+| `GET /admin/colo-probe?n=20` | 실행 colo와 Gemini 통과 여부를 함께 측정. 반복 호출로 결정적/확률적 구분 |
+| `GET /admin/embedding-status` | 임베딩이 채워지지 않은 행 수와 샘플 |
+| `POST /admin/embed-selftest` | DB를 바꾸지 않고 큐 경로 전체를 점검(존재하지 않는 id 사용) |
+
+상세 측정 기록은 [`feedback.md` 9.2절](./feedback.md)에 있습니다.
+
 ---
 
 ## 4. 서비스 연결 방식
@@ -377,7 +429,7 @@ Gemini 추출  {winery:"Chateau Margaux", region:"Bordeaux", vintage:"2018"}
 | Pages → Worker | `fetch` + CORS (`*.pages.dev`, localhost 허용) | `Authorization: Bearer <ADMIN_PASSWORD>` |
 | Worker → Supabase | `@supabase/supabase-js` → PostgREST HTTPS | `SUPABASE_KEY` (Worker secret) |
 | Worker → Gemini | `@google/generative-ai` + REST | `GEMINI_API_KEY` (Worker secret) |
-| Worker → Queue | 런타임 바인딩 `env.PHOTO_QUEUE` | 바인딩이 대신 처리 (아래 참고) |
+| Worker → Queue | 런타임 바인딩 `env.PHOTO_QUEUE` · `env.EMBED_QUEUE` | 바인딩이 대신 처리 (아래 참고) |
 
 **키가 노출되지 않는 이유**: `SUPABASE_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`은
 전부 `wrangler secret put`으로 Worker에만 주입됩니다. 브라우저가 아는 것은 Worker의
@@ -799,9 +851,11 @@ CREATE INDEX idx_sake_imports_embedding
 | 트리거 | 사용자의 사진 전송 | 관리자의 엑셀 업로드 |
 | 진입점 | `POST /telegram-webhook` | `POST /admin/upload-chunk` |
 | 인증 | 웹훅 secret token ([4절](#4-서비스-연결-방식)) | Bearer 비밀번호 |
-| 비동기 | Cloudflare Queues (1건씩) | 브라우저 측 3병렬 청크 |
+| 비동기 | `photo-search-queue` (1건씩) | 브라우저 측 3병렬 청크 + `embedding-queue` |
 | AI 사용 | Vision 추출 + 임베딩 + Vision 재검증 | 임베딩만 (신규 행 한정) |
-| DB 연산 | RPC `search_products` (읽기) | RPC `bulk_update_sake_imports` + `insert` (쓰기) |
-| 변환 축 | 이미지 → 텍스트 → 벡터 → 행 → 메시지 | 엑셀 → JSON → 텍스트 → 벡터 → 행 |
+| Gemini 호출 위치 | 큐 컨슈머 | 큐 컨슈머 ([3.7절](#37-gemini-호출이-전부-큐-컨슈머에-있는-이유)) |
+| DB 연산 | RPC `search_products` (읽기) | RPC `bulk_update_sake_imports` + `insert` + `update` (쓰기) |
+| 변환 축 | 이미지 → 텍스트 → 벡터 → 행 → 메시지 | 엑셀 → JSON → 텍스트 → 행 → (큐) → 벡터 |
 | 지연 목표 | 수 초 (사용자 대기) | 수 분 (배치, 재개 가능) |
-| 실패 처리 | 재시도 3회 → DLQ → 사용자 안내 | 백오프 재시도 → 중단 지점 재개 |
+| 완료 시점 | 답장이 도착한 때 | **INSERT가 아니라 임베딩이 채워진 때** (`/admin/embedding-status`의 `pending` = 0) |
+| 실패 처리 | 재시도 3회 → DLQ → 사용자 안내 | 브라우저 백오프 재시도(전송) + 큐 재시도 5회 → DLQ(임베딩) |
