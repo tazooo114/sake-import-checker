@@ -49,3 +49,24 @@ max_batch_size = 1       # 사진 1장씩 순차 처리
 max_batch_timeout = 5    # 최대 5초 대기
 max_retries = 3          # 실패 시 최대 3회 재시도
 dead_letter_queue = "photo-search-dlq"  # 최종 실패 시 DLQ로 이동
+
+# Cloudflare Queue - 엑셀 업로드의 임베딩 생성
+#
+# 사진 큐와 분리한 이유: 업로드 한 번이 메시지 수십~수백 건을 밀어넣는데,
+# max_batch_size=1인 사진 큐를 공유하면 사용자 사진이 그 뒤에서 몇 분씩 대기한다.
+[[queues.producers]]
+queue = "embedding-queue"
+binding = "EMBED_QUEUE"
+
+[[queues.consumers]]
+queue = "embedding-queue"
+max_batch_size = 1        # 메시지 1건 = Gemini 배치 1회
+max_batch_timeout = 5
+# 컨슈머 동시 실행 수를 묶어 Gemini 레이트 리밋을 피한다. 지정하지 않으면
+# 백로그에 따라 최대 250까지 자동 확장되어, 업로드 한 번에 수백 건이 동시에 나간다.
+# 기존 브라우저 업로드의 동시 요청 수(upload.js MAX_CONCURRENT = 3)와 맞춘 값이다.
+max_concurrency = 3
+# 사진 큐보다 재시도를 넉넉히 준다. 지역 차단은 실행 colo가 바뀌면 풀리는데,
+# 재시도는 새 컨슈머 실행이라 다른 colo를 잡을 기회가 된다.
+max_retries = 5
+dead_letter_queue = "embedding-dlq"

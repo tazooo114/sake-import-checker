@@ -10,6 +10,14 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   ENVIRONMENT: string;
   PHOTO_QUEUE: Queue<QueueMessage>;
+  /**
+   * 엑셀 업로드의 임베딩 생성 전용 큐.
+   *
+   * 사진 검색 큐와 분리한 이유: 업로드 한 번이 메시지 수십~수백 건을 밀어넣는데,
+   * max_batch_size=1인 photo-search-queue를 공유하면 그 뒤에 들어온 사용자 사진이
+   * 전부 소진될 때까지 대기하게 된다.
+   */
+  EMBED_QUEUE: Queue<EmbedQueueMessage>;
 }
 
 // Cloudflare Queue 메시지 타입
@@ -46,6 +54,23 @@ export interface EvalQueueMessage {
   fixtures?: SearchEvalFixture[];
   /** 결과를 보낼 텔레그램 chat_id. 생략하면 ADMIN_CHAT_ID로 보낸다. */
   chatId?: number;
+}
+
+/**
+ * 임베딩 생성 요청. 이미 INSERT된 행의 `name_embedding`을 채운다.
+ *
+ * **텍스트를 그대로 실어 보내는 이유**: 임베딩 원문은 DB에 저장되지 않는다.
+ * DB에 있는 건 `"닷사이 23 (Dassai 23)"`(괄호 포함)인데 임베딩 원문은
+ * `"닷사이 23 Dassai 23 Asahi Shuzo Japan"`(괄호 없음)이다. id만 보내고
+ * 컨슈머가 DB에서 재조립하면 문자열이 달라져 임베딩 레시피가 두 종류로
+ * 갈리고, 기존 행과 신규 행의 유사도 기준이 어긋난다.
+ *
+ * 크기: id(BIGSERIAL) + 텍스트 ≈ 100 B/건. 50건이면 약 5 KB로,
+ * Cloudflare Queues의 메시지 한도 128 KB에 한참 못 미친다.
+ */
+export interface EmbedQueueMessage {
+  kind: 'embed';
+  items: Array<{ id: number; text: string }>;
 }
 
 export type QueueMessage = PhotoQueueMessage | EvalQueueMessage;
