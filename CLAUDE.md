@@ -34,6 +34,32 @@ cd backend && export PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" && npx w
 - 시크릿은 `wrangler secret put`으로 넣으며 **값을 다시 읽을 수 없다**(이름만 조회 가능). 시크릿 값을 셸 명령줄에 직접 타이핑하지 말 것 — 히스토리에 남는다. `wrangler secret put`은 stdin으로 받으므로 안전하다.
 - 로컬 개발용 값은 `backend/.dev.vars`에 둔다(gitignore됨).
 
+### 큐 생성은 설치된 wrangler로 안 된다
+
+프로젝트에 설치된 wrangler 4.54는 `wrangler queues create`가 `The specified queue settings are invalid.` (API 400)로 실패한다. wrangler.toml 문제가 아니라 그 버전 자체의 문제이며, 다른 디렉터리에서 실행해도 같다. `wrangler queues list`나 `deploy` 같은 다른 큐 명령은 정상 동작한다.
+
+큐를 만들 때만 최신 wrangler를 일회성으로 쓴다. 최신 wrangler는 Node 22+를 요구하므로 v24를 써야 한다:
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:$PATH"
+npx -y wrangler@latest queues create <queue-name>
+```
+
+배포·로그 등 나머지 작업은 계속 v20 + 설치된 wrangler로 한다(위 참조). 프로젝트의 wrangler 버전은 올리지 않았다.
+
+**함정**: 에러 로그의 실제 API 응답은 마스킹되어 있다. `WRANGLER_LOG_SANITIZE=false`로 풀 수 있지만 그러면 **인증 토큰이 로그 파일에 평문으로 남으므로 쓰지 말 것.**
+
+### Gemini 지역 차단 (중요)
+
+Gemini는 호출 지역을 **API를 호출한 기계의 IP**로 판정한다(사람의 위치가 아니다). Workers에서 그 기계는 Worker를 실행 중인 엣지 PoP이다.
+
+- 이 개발 환경(한국 ISP, VPN 없음)에서 관리자 HTTP 요청은 **HKG(홍콩)** 에 붙고, 홍콩은 Gemini 비허용 지역이라 **100% 차단**된다. 확률적이 아니라 결정적이다(20/20 실패 확인).
+- VPN을 켜면 ICN에 붙어 통과한다. 업로드에 매번 VPN이 필요했던 이유가 이것이다.
+- 요청 안에서의 재시도는 같은 colo에 갇혀 무의미하다. 브라우저 재시도도 같은 PoP에 다시 붙으므로 마찬가지다.
+- **큐 컨슈머는 붙을 클라이언트가 없어 무관한 위치에서 돈다**(측정값 SJC/US). 그래서 Gemini 호출은 전부 큐 컨슈머에서 한다.
+
+진단: `GET /admin/colo-probe?n=20` (관리자 인증). 실행 colo와 Gemini 통과 여부를 함께 돌려준다.
+
 ## 개선 작업 추적
 
 `sake-import-checker/docs/feedback.md`가 코드 리뷰 결과와 우선순위표(진행 상태 포함)를 담고 있다. 이 프로젝트에서 개선 작업을 할 때는 해당 항목의 상태를 같이 갱신할 것.
