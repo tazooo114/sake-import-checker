@@ -5,6 +5,7 @@ import { sendMessage, getFileUrl } from '../services/telegram';
 import { formatSearchResult } from '../utils/formatter';
 import { logErrorAndNotify } from '../utils/logger';
 import { runSearchEval, formatEvalReport } from '../services/evalRunner';
+import { logColo } from '../utils/colo';
 
 // ============================================
 // Cloudflare Queue Consumer
@@ -15,6 +16,9 @@ export async function handlePhotoQueue(
     batch: MessageBatch<QueueMessage>,
     env: Env
 ): Promise<void> {
+    // 실행 PoP 진단(임시). Gemini가 통과하는 이 경로의 데이터센터를 HTTP 경로와 비교한다.
+    await logColo('queue/consumer');
+
     for (const message of batch.messages) {
         // 검색 평가는 임베딩 API를 쓰는데, 관리자 HTTP 요청이 도달하는 엣지 위치에서는
         // Gemini가 'User location is not supported'로 거절한다. 사진 검색이 정상 동작하는
